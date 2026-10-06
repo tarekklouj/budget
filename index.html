@@ -161,9 +161,10 @@ table.pv td,table.pv th{padding:6px 8px;border-bottom:1px solid var(--line);text
       <b id="monthLbl"></b>
       <button class="icon" id="nextM" aria-label="Mois suivant"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"></path></svg></button>
     </div>
-    <button class="icon" id="lockBtn" aria-label="Verrouiller"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"></rect><path d="M8 10V7a4 4 0 018 0v3"></path></svg></button>
+    <button class="icon" id="lockBtn" style="order:2" aria-label="Verrouiller"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2.5"></rect><path d="M8 10V7a4 4 0 018 0v3"></path></svg></button>
   </div>
 
+  <div class="seg" id="perSeg" role="group" aria-label="Période"><button data-p="month" aria-pressed="true">Mois</button><button data-p="year" aria-pressed="false">Année</button></div>
   <section id="v-home"></section>
   <section id="v-tx" hidden></section>
   <section id="v-stats" hidden></section>
@@ -280,19 +281,26 @@ document.addEventListener("visibilitychange",()=>{if(document.hidden)hiddenAt=Da
 $("#lockBtn").onclick=async()=>{clearTimeout(saveTimer);await persist();showLock()};
 
 /* ============ app shell ============ */
-let VIEW="home",MONTH=ym(todayISO()),TXF={q:"",f:"all"};
+let VIEW="home",MONTH=ym(todayISO()),PERIOD="month",TXF={q:"",f:"all"};
+const YEAR=()=>MONTH.slice(0,4);
+const periodTx=()=>PERIOD==="year"?DB.tx.filter(t=>t.date.slice(0,4)===YEAR()):monthTx(MONTH);
+const periodLabel=()=>PERIOD==="year"?YEAR():monthLabel(MONTH);
+const monthsInPeriod=()=>{if(PERIOD!=="year")return 1;const now=todayISO();return YEAR()===now.slice(0,4)?+now.slice(5,7):YEAR()<now.slice(0,4)?12:1};
+document.querySelectorAll("#perSeg button").forEach(b=>b.onclick=()=>{PERIOD=b.dataset.p;document.querySelectorAll("#perSeg button").forEach(x=>x.setAttribute("aria-pressed",x===b));if(TXF.f!=="unc")TXF.f="all";render()});
 function lastMonthWithData(){let m="";DB.tx.forEach(t=>{if(t.date>m)m=t.date});return m?ym(m):""}
-function enterApp(){$("#lock").hidden=true;$("#app").hidden=false;lastAct=Date.now();if(DB.tx.length&&!monthTx(MONTH).length){const lm=lastMonthWithData();if(lm)MONTH=lm}render()}
+function enterApp(){$("#lock").hidden=true;$("#app").hidden=false;lastAct=Date.now();if(DB.tx.length&&!periodTx().length){const lm=lastMonthWithData();if(lm)MONTH=lm}render()}
 function monthLabel(m){const [y,mm]=m.split("-").map(Number);return new Date(y,mm-1,1).toLocaleDateString("fr-BE",{month:"long",year:"numeric"})}
 function shiftMonth(m,d){let [y,mm]=m.split("-").map(Number);mm+=d;while(mm<1){mm+=12;y--}while(mm>12){mm-=12;y++}return y+"-"+String(mm).padStart(2,"0")}
-$("#prevM").onclick=()=>{MONTH=shiftMonth(MONTH,-1);render()};
-$("#nextM").onclick=()=>{MONTH=shiftMonth(MONTH,1);render()};
+$("#prevM").onclick=()=>{MONTH=shiftMonth(MONTH,PERIOD==="year"?-12:-1);render()};
+$("#nextM").onclick=()=>{MONTH=shiftMonth(MONTH,PERIOD==="year"?12:1);render()};
 document.querySelectorAll("nav button[data-v]").forEach(b=>b.onclick=()=>go(b.dataset.v));
 function go(v){VIEW=v;document.querySelectorAll("nav button[data-v]").forEach(x=>x.toggleAttribute("aria-current",x.dataset.v===v));document.querySelectorAll("nav button[aria-current]").forEach(x=>x.setAttribute("aria-current","page"));render();scrollTo({top:0})}
 $("#fab").onclick=()=>openTxSheet(null);
 function render(){
   if(!DB)return;
-  $("#monthLbl").textContent=monthLabel(MONTH);
+  $("#monthLbl").textContent=periodLabel();
+  $("#prevM").setAttribute("aria-label",PERIOD==="year"?"Année précédente":"Mois précédent");$("#nextM").setAttribute("aria-label",PERIOD==="year"?"Année suivante":"Mois suivant");
+  $("#perSeg").hidden=VIEW==="set";
   ["home","tx","stats","set"].forEach(v=>$("#v-"+v).hidden=v!==VIEW);
   ({home:renderHome,tx:renderTx,stats:renderStats,set:renderSet})[VIEW]();
 }
@@ -317,30 +325,31 @@ function emptyMonthCard(){
   if(!DB.tx.length)return `<div class="card empty"><p style="margin:0 0 12px"><b>Aucune opération pour l'instant.</b></p><button class="btn primary" id="homeImport">Importer un relevé</button></div>`;
   const ds=DB.tx.map(t=>t.date).sort(),lm=ym(ds[ds.length-1]);
   const f=d=>new Date(d).toLocaleDateString("fr-BE",{day:"numeric",month:"long",year:"numeric"});
-  return `<div class="card empty"><p style="margin:0 0 6px"><b>Aucune opération en ${esc(monthLabel(MONTH))}.</b></p><p class="small" style="margin:0 0 14px">Tes ${DB.tx.length} opérations vont du ${f(ds[0])} au ${f(ds[ds.length-1])}.</p><button class="btn primary" id="goLast">Voir ${esc(monthLabel(lm))}</button></div>`;
+  return `<div class="card empty"><p style="margin:0 0 6px"><b>Aucune opération en ${esc(periodLabel())}.</b></p><p class="small" style="margin:0 0 14px">Tes ${DB.tx.length} opérations vont du ${f(ds[0])} au ${f(ds[ds.length-1])}.</p><button class="btn primary" id="goLast">Voir ${esc(monthLabel(lm))}</button></div>`;
 }
 function renderHome(){
-  const tx=monthTx(MONTH),spent=-tx.filter(isExpense).reduce((a,t)=>a+t.amount,0),inc=tx.filter(isIncome).reduce((a,t)=>a+t.amount,0);
-  const budTotal=Object.values(DB.budgets).reduce((a,b)=>a+(+b||0),0);
-  const isCur=MONTH===ym(todayISO());
+  const Y=PERIOD==="year",mult=Y?12:1,nm=monthsInPeriod();
+  const tx=periodTx(),spent=-tx.filter(isExpense).reduce((a,t)=>a+t.amount,0),inc=tx.filter(isIncome).reduce((a,t)=>a+t.amount,0);
+  const budTotal=Object.values(DB.budgets).reduce((a,b)=>a+(+b||0),0)*mult;
+  const isCur=!Y&&MONTH===ym(todayISO());
   const [y,m]=MONTH.split("-").map(Number),dim=new Date(y,m,0).getDate(),left=isCur?dim-new Date().getDate()+1:0;
   let hero;
   if(budTotal>0){
     const rest=budTotal-spent,pct=Math.min(100,spent/budTotal*100);
-    hero=`<div class="hero"><div class="between"><span style="font-weight:700">Reste à dépenser</span><span style="font-size:14px">Budget ${money(budTotal)}</span></div>
+    hero=`<div class="hero"><div class="between"><span style="font-weight:700">Reste à dépenser</span><span style="font-size:14px">Budget ${Y?"annuel ":""}${money(budTotal)}</span></div>
       <div class="amt">${money(rest)}</div><div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="meta"><span>${money(spent)} dépensés</span>${isCur&&rest>0?`<span>${left} j · ${money(rest/left)}/jour</span>`:""}</div></div>`;
+      <div class="meta"><span>${money(spent)} dépensés</span>${isCur&&rest>0?`<span>${left} j · ${money(rest/left)}/jour</span>`:Y?`<span>Moyenne ${money(spent/nm)}/mois</span>`:""}</div></div>`;
   }else{
-    hero=`<div class="hero"><span style="font-weight:700">Solde du mois</span><div class="amt">${signed(inc-spent)}</div>
-      <div class="meta"><span>Entrées ${money(inc)}</span><span>Sorties ${money(spent)}</span></div></div>`;
+    hero=`<div class="hero"><span style="font-weight:700">Solde ${Y?"de l'année":"du mois"}</span><div class="amt">${signed(inc-spent)}</div>
+      <div class="meta"><span>Entrées ${money(inc)}</span><span>Sorties ${money(spent)}</span></div>${Y?`<div class="meta" style="opacity:.9"><span>Moyenne ${money(spent/nm)}/mois</span><span>Épargné ${inc?Math.round((inc-spent)/inc*100):0} %</span></div>`:""}</div>`;
   }
   const unc=DB.tx.filter(t=>!t.cat).length;
-  const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=-tx.filter(t=>t.cat===c.id&&t.amount<0).reduce((a,t)=>a+t.amount,0),b=+DB.budgets[c.id],over=s>b;
+  const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=-tx.filter(t=>t.cat===c.id&&t.amount<0).reduce((a,t)=>a+t.amount,0),b=+DB.budgets[c.id]*mult,over=s>b;
     return `<div class="bud"><div class="between"><span>${esc(c.name)}</span><span${over?' style="color:var(--warn)"':""}><b>${money(s)}</b> <span class="muted">/ ${money(b)}</span></span></div><div class="bar ${over?"over":""}"><i style="width:${Math.min(100,s/b*100)}%;${over?"":"background:"+c.color}"></i></div>${over?`<span class="small" style="color:var(--warn);font-weight:700">Dépassé de ${money(s-b)}</span>`:""}</div>`}).join("");
   const recent=[...tx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   $("#v-home").innerHTML=`${hero}
     ${unc?`<button class="banner" id="goUnc"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"></path><circle cx="12" cy="12" r="10"></circle></svg><span style="flex:1"><b>${unc} opération${unc>1?"s":""} à classer</b><br><span class="small">Classe-les une fois, l'appli s'en souviendra.</span></span></button>`:""}
-    <div class="between"><h2>Budgets du mois</h2><button class="link" id="editBud">${buds?"Modifier":"Définir"}</button></div>
+    <div class="between"><h2>Budgets ${Y?"de l'année":"du mois"}</h2><button class="link" id="editBud">${buds?"Modifier":"Définir"}</button></div>
     ${buds?`<div class="list">${buds}</div>`:`<div class="card small">Fixe un budget par catégorie pour voir ce qu'il te reste à dépenser.</div>`}
     <div class="between"><h2>Dernières opérations</h2>${tx.length?`<button class="link" id="seeAll">Tout voir</button>`:""}</div>
     ${recent.length?`<div class="list">${recent.map(txRow).join("")}</div>`:emptyMonthCard()}`;
@@ -354,11 +363,11 @@ function renderHome(){
 
 /* ============ TRANSACTIONS ============ */
 function renderTx(){
-  const all=TXF.f==="unc"?DB.tx.filter(t=>!t.cat):monthTx(MONTH);
+  const all=TXF.f==="unc"?DB.tx.filter(t=>!t.cat):periodTx();
   const q=strip(TXF.q);
   let list=all.filter(t=>(TXF.f==="out"?t.amount<0:TXF.f==="in"?t.amount>0:true)&&(!q||strip(t.label+" "+(t.note||"")+" "+catOf(t).name).includes(q)));
   list.sort((a,b)=>b.date.localeCompare(a.date));
-  const chips=[["all","Tout le mois"],["out","Dépenses"],["in","Revenus"],["unc",`À classer (${DB.tx.filter(t=>!t.cat).length})`]];
+  const chips=[["all",PERIOD==="year"?"Toute l'année":"Tout le mois"],["out","Dépenses"],["in","Revenus"],["unc",`À classer (${DB.tx.filter(t=>!t.cat).length})`]];
   let html="",last="";
   list.forEach(t=>{if(t.date!==last){if(last)html+="</div>";last=t.date;html+=`<p class="datehead">${new Date(t.date).toLocaleDateString("fr-BE",{weekday:"long",day:"numeric",month:"long"})}</p><div class="list">`}html+=txRow(t)});
   if(last)html+="</div>";
@@ -661,23 +670,31 @@ function commitImport(){
 
 /* ============ STATS ============ */
 function renderStats(){
-  const tx=monthTx(MONTH).filter(isExpense),total=-tx.reduce((a,t)=>a+t.amount,0);
+  const Y=PERIOD==="year",all=periodTx(),tx=all.filter(isExpense),total=-tx.reduce((a,t)=>a+t.amount,0),inc=all.filter(isIncome).reduce((a,t)=>a+t.amount,0),nm=monthsInPeriod();
   const by={};tx.forEach(t=>{const k=t.cat||"_";by[k]=(by[k]||0)-t.amount});
   const parts=Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({c:k==="_"?NONE:CAT[k],v}));
   const C=2*Math.PI*70;let off=0;
   const ring=parts.map(p=>{const L=total?p.v/total*C:0;const s=`<circle cx="90" cy="90" r="70" fill="none" stroke="${p.c.color}" stroke-width="22" stroke-dasharray="${Math.max(0,L-1.5)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 90 90)"></circle>`;off+=L;return s}).join("");
-  const months=[...Array(6)].map((_,i)=>shiftMonth(MONTH,i-5));
+  const months=Y?[...Array(12)].map((_,i)=>YEAR()+"-"+String(i+1).padStart(2,"0")):[...Array(6)].map((_,i)=>shiftMonth(MONTH,i-5));
   const series=months.map(m=>{const t=monthTx(m);return {m,out:-t.filter(isExpense).reduce((a,x)=>a+x.amount,0),inc:t.filter(isIncome).reduce((a,x)=>a+x.amount,0)}});
   const mx=Math.max(1,...series.map(s=>Math.max(s.out,s.inc)));
   const merch={};tx.forEach(t=>{const k=merchantKey(t.label)||t.label;merch[k]=(merch[k]||0)-t.amount});
   const top=Object.entries(merch).sort((a,b)=>b[1]-a[1]).slice(0,5);
-  $("#v-stats").innerHTML=`<h1>Statistiques</h1>
+  const withData=series.filter(x=>x.out>0),hi=withData.sort((a,b)=>b.out-a.out)[0];
+  const catRows=parts.map(p=>`<div class="tx" style="cursor:default"><span class="dot" style="background:${p.c.color}"></span><span class="t"><b>${esc(p.c.name)}</b>${Y?`<span>${money(p.v/nm)} / mois en moyenne</span>`:""}</span><span class="a">${money(p.v)}</span></div>`).join("");
+  $("#v-stats").innerHTML=`<h1>Statistiques ${Y?esc(YEAR()):""}</h1>
+    ${Y&&(total||inc)?`<div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div><div class="small">Dépensé</div><b style="font-size:20px">${money(total)}</b></div>
+      <div><div class="small">Gagné</div><b style="font-size:20px">${money(inc)}</b></div>
+      <div><div class="small">Moyenne par mois</div><b style="font-size:20px">${money(total/nm)}</b></div>
+      <div><div class="small">Mois le plus cher</div><b style="font-size:20px;text-transform:capitalize">${hi?esc(new Date(hi.m+"-01").toLocaleDateString("fr-BE",{month:"long"})):"—"}</b>${hi?`<div class="small">${money(hi.out)}</div>`:""}</div></div>`:""}
     ${total?`<div class="card row" style="align-items:center;gap:16px"><div style="position:relative;width:140px;height:140px;flex:none"><svg width="140" height="140" viewBox="0 0 180 180" role="img" aria-label="Dépenses par catégorie">${ring}</svg><div style="position:absolute;inset:0;display:grid;place-items:center;text-align:center"><div><div class="small">Dépensé</div><b style="font-size:18px">${money(total)}</b></div></div></div>
       <div class="legend">${parts.map(p=>`<div><span class="dot" style="background:${p.c.color}"></span><span class="n">${esc(p.c.name)}</span><b>${Math.round(p.v/total*100)} %</b></div>`).join("")}</div></div>`
-      :`<div class="card empty">Aucune dépense ce mois-ci.</div>`}
-    <h2>6 derniers mois</h2>
+      :`<div class="card empty">Aucune dépense ${Y?"cette année":"ce mois-ci"}.</div>`}
+    ${catRows?`<h2>Par catégorie</h2><div class="list">${catRows}</div>`:""}
+    <h2>${Y?"Mois par mois":"6 derniers mois"}</h2>
     <div class="card"><div class="row small" style="gap:14px"><span class="row" style="gap:6px"><span class="dot" style="background:var(--warnFill)"></span>Dépenses</span><span class="row" style="gap:6px"><span class="dot" style="background:var(--accent)"></span>Revenus</span></div>
-      <div class="bars">${series.map(s=>`<div class="c"><div class="pair"><i style="height:${s.out/mx*110}px;background:var(--warnFill)" title="Dépenses ${money(s.out)}"></i><i style="height:${s.inc/mx*110}px;background:var(--accent)" title="Revenus ${money(s.inc)}"></i></div><span class="lab">${new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"short"})}</span></div>`).join("")}</div></div>
+      <div class="bars" style="grid-template-columns:repeat(${series.length},minmax(0,1fr));gap:${Y?4:8}px">${series.map(s=>`<div class="c"><div class="pair"><i style="height:${s.out/mx*110}px;background:var(--warnFill)" title="Dépenses ${money(s.out)}"></i><i style="height:${s.inc/mx*110}px;background:var(--accent)" title="Revenus ${money(s.inc)}"></i></div><span class="lab">${Y?new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"narrow"}):new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"short"})}</span></div>`).join("")}</div></div>
     ${top.length?`<h2>Où part ton argent</h2><div class="list">${top.map(([k,v])=>`<div class="tx" style="cursor:default"><span class="t"><b style="text-transform:capitalize">${esc(k)}</b></span><span class="a">${money(v)}</span></div>`).join("")}</div>`:""}`;
 }
 
