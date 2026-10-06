@@ -180,7 +180,7 @@ table.pv td,table.pv th{padding:6px 8px;border-bottom:1px solid var(--line);text
 </div>
 
 <div id="sheetRoot"></div>
-<input type="file" id="fileIn" accept=".csv,.txt,text/csv" hidden>
+<input type="file" id="fileIn" accept=".csv,.txt,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
 <input type="file" id="backupIn" accept=".json,application/json" hidden>
 
 <script>
@@ -213,7 +213,7 @@ const CATS=[
 const CAT=Object.fromEntries(CATS.map(c=>[c.id,c]));
 const NONE={id:null,name:"À classer",color:"#9AA39E"};
 const catOf=t=>CAT[t.cat]||NONE;
-const DEFAULT_RULES=[["revolut","epargne"],["retrait","autre"],["atm ","autre"],["geldopname","autre"],["top-up","epargne"],["vers ing","epargne"],["uber eats","restos"],["deliveroo","restos"],["takeaway","restos"],["restaurant","restos"],["mcdonald","restos"],["starbucks","restos"],["burger king","restos"],
+const DEFAULT_RULES=[["revolut","epargne"],["compte d'investissement","epargne"],["vers le compte","epargne"],["coffre","epargne"],["digital assets","epargne"],["retrait","autre"],["atm ","autre"],["geldopname","autre"],["top-up","epargne"],["vers ing","epargne"],["uber eats","restos"],["deliveroo","restos"],["takeaway","restos"],["restaurant","restos"],["mcdonald","restos"],["starbucks","restos"],["burger king","restos"],
  ["delhaize","courses"],["colruyt","courses"],["aldi","courses"],["lidl","courses"],["carrefour","courses"],["albert heijn","courses"],["okay ","courses"],["spar ","courses"],["intermarche","courses"],["cora ","courses"],["match ","courses"],
  ["sncb","transport"],["nmbs","transport"],["stib","transport"],["mivb","transport"],["de lijn","transport"],["total","transport"],["shell","transport"],["q8","transport"],["esso","transport"],["lukoil","transport"],["uber","transport"],["parking","transport"],
  ["proximus","abos"],["telenet","abos"],["orange","abos"],["voo ","abos"],["scarlet","abos"],["mobile vikings","abos"],["netflix","abos"],["spotify","abos"],["disney","abos"],["apple.com","abos"],["youtube","abos"],["prime video","abos"],
@@ -403,7 +403,7 @@ function openTxSheet(t){
 
 /* ============ parsing ============ */
 function parseAmount(v){
-  if(v==null)return 0;let s=String(v).trim().replace(/\s|\u00a0|€|EUR/gi,"");if(!s)return 0;
+  if(v==null)return 0;let s=String(v).trim().replace(/\s|\u00a0|\u202f|€|EUR/gi,"");if(!s)return 0;
   let neg=/^-|^\(.*\)$|-$/.test(s);s=s.replace(/[()+-]/g,"");
   const lc=s.lastIndexOf(","),ld=s.lastIndexOf(".");
   if(lc>-1&&ld>-1){s=lc>ld?s.replace(/\./g,"").replace(",","."):s.replace(/,/g,"")}
@@ -411,11 +411,14 @@ function parseAmount(v){
   else if(ld>-1&&/^\d{1,3}(\.\d{3})+$/.test(s)){s=s.replace(/\./g,"")}
   const n=parseFloat(s);return isNaN(n)?0:Math.round((neg?-n:n)*100)/100;
 }
+const MONTHS={janv:1,jan:1,fevr:2,fev:2,feb:2,mars:3,mar:3,mrt:3,maar:3,avr:4,avri:4,apr:4,mai:5,may:5,mei:5,juin:6,jun:6,juni:6,juil:7,jul:7,juli:7,aout:8,aou:8,aug:8,sept:9,sep:9,oct:10,okt:10,nov:11,dec:12};
 function parseDate(v){
   const s=String(v||"").trim();let m;
   if((m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/)))return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
   if((m=s.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/))){const y=m[3].length===2?"20"+m[3]:m[3];return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`}
   if((m=s.match(/^(\d{4})(\d{2})(\d{2})$/)))return `${m[1]}-${m[2]}-${m[3]}`;
+  if((m=strip(s).match(/^(\d{1,2})\.?\s+([a-z]+)\.?,?\s+(\d{4})/))){const mo=MONTHS[m[2].slice(0,4)]||MONTHS[m[2].slice(0,3)];if(mo)return `${m[3]}-${String(mo).padStart(2,"0")}-${m[1].padStart(2,"0")}`}
+  if((m=s.match(/^(\d{5})(\.\d+)?$/))&&+m[1]>20000&&+m[1]<80000){const d=new Date(Date.UTC(1899,11,30)+(+m[1])*864e5);return d.toISOString().slice(0,10)}
   return null;
 }
 function sanitize(label){
@@ -443,26 +446,68 @@ function parseCSV(text){
 }
 const H={
   date:["completed date","date d'execution","date execution","date comptable","date de comptabilisation","uitvoeringsdatum","boekingsdatum","booking date","transaction date","date","datum","date valeur","valutadatum"],
-  amount:["montant","bedrag","amount"],
+  amount:["montant","bedrag","amount","argent entrant","entrant/sortant","money in/out"],balance:["solde","balance","saldo"],
   debit:["debit","debet","uitgaven","sortie"],credit:["credit","inkomsten","entree"],
   label1:["nom de la contrepartie","nom contrepartie","naam tegenpartij","naam van de tegenpartij","contrepartie","tegenpartij","counterparty","beneficiaire"],
   label2:["communication","mededeling","libelle","description","omschrijving","details","detail","message","bericht"],
-  fee:["fee","frais","kosten"],status:["state","statut","status"],currency:["currency","devise","munteenheid"],type:["type"],
+  fee:["fee","frais","kosten"],status:["state","statut","status"],currency:["currency","devise","munteenheid"],type:["type","categorie","category"],
   ref:["numero de mouvement","omzetnummer","numero de sequence","numero de transaction","sequence","volgnummer","transactienummer","reference","referentie"]
 };
 function findCol(headers,keys,exclude){const hs=headers.map(strip);for(const k of keys){const i=hs.findIndex((h,j)=>!exclude.includes(j)&&(h===k||h.includes(k)));if(i>-1)return i}return -1}
-function detect(rows){
-  let hi=0;for(let i=0;i<Math.min(15,rows.length);i++){const s=strip(rows[i].join(" "));if(rows[i].length>=3&&/(date|datum)/.test(s)&&/(montant|bedrag|amount|debit|credit)/.test(s)){hi=i;break}}
+const HDR_DATE=/(^|\s|\|)(date|datum|completed date)/,HDR_AMT=/(montant|bedrag|amount|debit|credit|argent entrant|entrant\/sortant)/;
+function findTables(rows){
+  const out=[];
+  rows.forEach((r,i)=>{const s=strip(r.join("|"));if(r.filter(x=>x).length>=3&&HDR_DATE.test(s)&&HDR_AMT.test(s)){
+    let t="";for(let k=i-1;k>=Math.max(0,i-6);k--){const ne=rows[k].filter(x=>x);if(ne.length===1&&!/releve|transactions|^-+$/.test(strip(ne[0]))){t=ne[0];break}}
+    out.push({hi:i,title:t||("Tableau "+(out.length+1))})}});
+  return out.length?out:[{hi:0,title:"Tableau 1"}];
+}
+function detect(rows,ti){
+  const tables=findTables(rows);
+  if(ti==null){ti=tables.findIndex(t=>/\(eur\)|\beur\b/.test(strip(t.title)));if(ti<0)ti=0}
+  const hi=tables[ti].hi,end=ti+1<tables.length?tables[ti+1].hi:rows.length;
   const headers=rows[hi].map((h,i)=>h||("Colonne "+(i+1)));const used=[];
   const pick=k=>{const i=findCol(headers,H[k],used);if(i>-1)used.push(i);return i};
   const m={date:pick("date"),amount:pick("amount"),debit:-1,credit:-1,label1:pick("label1"),label2:-1,label3:-1,ref:pick("ref")};
   m.label2=pick("label2");m.label3=pick("label2");
   if(m.amount<0){m.debit=pick("debit");m.credit=pick("credit")}
   if(m.label1<0&&m.label2>-1){m.label1=m.label2;m.label2=m.label3;m.label3=pick("label2")}
-  m.fee=pick("fee");m.status=pick("status");m.currency=pick("currency");m.type=pick("type");
-  const hs=strip(headers.join("|"));
-  const acct=/product/.test(hs)&&/started date/.test(hs)?"Revolut":/numero de mouvement|omzetnummer|nom du compte|naam van de rekening/.test(hs)?"ING":"";
-  return {hi,headers,m,acct,sig:fnv(headers.map(strip).join("|"))};
+  m.fee=pick("fee");m.balance=pick("balance");m.status=pick("status");m.currency=pick("currency");m.type=pick("type");
+  const hs=strip(headers.join("|")),all=strip(rows.slice(0,Math.min(rows.length,hi)).map(r=>r.join(" ")).join(" "));
+  const acct=/revolut/.test(all)||(/product/.test(hs)&&/started date/.test(hs))||/argent entrant/.test(hs)?"Revolut":/numero de mouvement|omzetnummer|nom du compte|naam van de rekening/.test(hs)?"ING":"";
+  return {hi,end,ti,tables,headers,m,acct,sig:fnv(headers.map(strip).join("|"))};
+}
+
+/* ============ XLSX (no library) ============ */
+async function inflateRaw(u8){if(typeof DecompressionStream==="undefined")throw new Error("nodecomp");const s=new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate-raw"));return new Uint8Array(await new Response(s).arrayBuffer())}
+async function unzip(buf,want){
+  const u=new Uint8Array(buf),dv=new DataView(buf);let e=-1;
+  for(let i=u.length-22;i>=Math.max(0,u.length-70000);i--){if(dv.getUint32(i,true)===0x06054b50){e=i;break}}
+  if(e<0)throw new Error("zip");
+  const n=dv.getUint16(e+10,true);let p=dv.getUint32(e+16,true);const files={};
+  for(let k=0;k<n;k++){
+    const method=dv.getUint16(p+10,true),csize=dv.getUint32(p+20,true),nl=dv.getUint16(p+28,true),xl=dv.getUint16(p+30,true),cl=dv.getUint16(p+32,true),off=dv.getUint32(p+42,true);
+    const name=dec.decode(u.subarray(p+46,p+46+nl));p+=46+nl+xl+cl;
+    if(!want(name))continue;
+    const lnl=dv.getUint16(off+26,true),lxl=dv.getUint16(off+28,true),start=off+30+lnl+lxl,data=u.subarray(start,start+csize);
+    files[name]=method===0?data:method===8?await inflateRaw(data):null;
+  }
+  return files;
+}
+const colIdx=l=>{let n=0;for(const ch of l.toUpperCase())n=n*26+(ch.charCodeAt(0)-64);return n-1};
+async function readXlsx(buf){
+  const f=await unzip(buf,n=>/^xl\/(sharedStrings\.xml|worksheets\/sheet\d+\.xml)$/.test(n));
+  const xml=n=>f[n]?new DOMParser().parseFromString(dec.decode(f[n]),"application/xml"):null;
+  const ss=[],sx=xml("xl/sharedStrings.xml");
+  if(sx)for(const si of sx.getElementsByTagName("si")){let t="";for(const x of si.getElementsByTagName("t"))t+=x.textContent;ss.push(t)}
+  const sheets=Object.keys(f).filter(n=>/worksheets\/sheet\d+\.xml$/.test(n)).sort((a,b)=>parseInt(a.match(/(\d+)\.xml$/)[1])-parseInt(b.match(/(\d+)\.xml$/)[1]));
+  const rows=[];
+  for(const n of sheets){const d=xml(n);if(!d)continue;
+    for(const r of d.getElementsByTagName("row")){const arr=[];
+      for(const c of r.getElementsByTagName("c")){const ref=(c.getAttribute("r")||"").replace(/\d+/g,"");const col=ref?colIdx(ref):arr.length;const t=c.getAttribute("t");const v=c.getElementsByTagName("v")[0];let val="";
+        if(t==="s")val=ss[+(v&&v.textContent)]||"";else if(t==="inlineStr"){for(const x of c.getElementsByTagName("t"))val+=x.textContent}else val=v?v.textContent:"";arr[col]=val}
+      const filled=Array.from(arr,x=>x==null?"":String(x).trim());if(filled.some(x=>x))rows.push(filled)}}
+  return rows;
 }
 
 /* ============ import wizard ============ */
@@ -471,8 +516,12 @@ function startImport(){$("#fileIn").value="";$("#fileIn").click()}
 $("#fileIn").onchange=async e=>{
   const f=e.target.files[0];if(!f||!DB)return;
   if(f.size>15e6)return toast("Fichier trop volumineux");
-  const rows=parseCSV(decodeFile(await f.arrayBuffer()));
-  if(rows.length<2)return toast("Ce fichier ne ressemble pas à un relevé CSV");
+  const buf=await f.arrayBuffer(),head=new Uint8Array(buf,0,Math.min(4,buf.byteLength));
+  let rows;
+  if(/\.xlsx$/i.test(f.name)||(head[0]===0x50&&head[1]===0x4b)){
+    try{rows=await readXlsx(buf)}catch(x){return toast(x&&x.message==="nodecomp"?"Mets à jour iOS pour importer des fichiers Excel, ou exporte en CSV":"Impossible de lire ce fichier Excel")}
+  }else rows=parseCSV(decodeFile(buf));
+  if(rows.length<2)return toast("Ce fichier ne ressemble pas à un relevé");
   const d=detect(rows);if(DB.mappings[d.sig])Object.assign(d.m,DB.mappings[d.sig]);
   if(DB.mappings[d.sig]&&DB.mappings[d.sig].acct)d.acct=DB.mappings[d.sig].acct;
   if(!d.acct)d.acct=/revolut/i.test(f.name)?"Revolut":/\bing\b|ing[_-]/i.test(f.name)?"ING":"";
@@ -480,10 +529,11 @@ $("#fileIn").onchange=async e=>{
 };
 function colSelect(id,val,optional){return `<select class="input" id="${id}">${optional?`<option value="-1">— aucune —</option>`:""}${IMP.headers.map((h,i)=>`<option value="${i}" ${+val===i?"selected":""}>${esc(h)}</option>`).join("")}</select>`}
 function showMapping(){
-  const m=IMP.m,data=IMP.rows.slice(IMP.hi+1);
+  const m=IMP.m,data=IMP.rows.slice(IMP.hi+1,IMP.end);
   const ok=m.date>-1&&(m.amount>-1||m.debit>-1||m.credit>-1)&&m.label1>-1;
   sheet(`<h3>Importer « ${esc(IMP.name)} »</h3>
     <p class="small" style="margin-top:-6px">${data.length} lignes trouvées. ${ok?"Les colonnes ont été détectées automatiquement, vérifie-les :":"Indique quelle colonne correspond à quoi :"}</p>
+    ${IMP.tables.length>1?`<label class="f">Tableau à importer<select class="input" id="mTab">${IMP.tables.map((t,i)=>`<option value="${i}" ${i===IMP.ti?"selected":""}>${esc(t.title)}</option>`).join("")}</select></label>`:""}
     <label class="f">Compte<input class="input" id="acct" value="${esc(IMP.acct||"")}" placeholder="ING, Revolut…"></label>
     <label class="f">Date${colSelect("mDate",m.date)}</label>
     <label class="f">Montant (positif/négatif)${colSelect("mAmt",m.amount,true)}</label>
@@ -495,17 +545,22 @@ function showMapping(){
     <button class="btn primary block" id="analyse">Analyser</button>`);
   const read=()=>Object.assign({},IMP.m,{date:+$("#mDate").value,amount:+$("#mAmt").value,debit:+$("#mDeb").value,credit:+$("#mCre").value,label1:+$("#mL1").value,label2:+$("#mL2").value,label3:+$("#mL3").value,ref:+$("#mRef").value});
   const pv=()=>{IMP.m=read();const r=buildRows(3);$("#pv").innerHTML=`<p class="small" style="font-weight:700;margin:4px 0 6px">Aperçu</p><div class="scroll"><table class="pv"><tr><th>Date</th><th>Montant</th><th>Libellé</th></tr>${r.map(x=>`<tr><td>${esc(x.date||"⚠️")}</td><td>${x.amount?signed(x.amount):"⚠️"}</td><td>${esc(x.label)}</td></tr>`).join("")}</table></div><p></p>`};
-  document.querySelectorAll(".sheet select").forEach(s=>s.onchange=pv);pv();
+  document.querySelectorAll(".sheet select:not(#mTab)").forEach(s=>s.onchange=pv);pv();
+  const tb=$("#mTab");if(tb)tb.onchange=()=>{const acct=$("#acct").value;Object.assign(IMP,detect(IMP.rows,+tb.value));if(DB.mappings[IMP.sig])Object.assign(IMP.m,DB.mappings[IMP.sig]);IMP.acct=acct||IMP.acct;showMapping()};
   $("#analyse").onclick=()=>{IMP.m=read();IMP.acct=$("#acct").value.trim();DB.mappings[IMP.sig]=Object.assign({},IMP.m,{acct:IMP.acct});analyse()};
 }
 function buildRows(limit){
-  const m=IMP.m,out=[];const data=IMP.rows.slice(IMP.hi+1);IMP.skipped=0;
+  const m=IMP.m,out=[];const data=IMP.rows.slice(IMP.hi+1,IMP.end);IMP.skipped=0;let prevBal=null;
   for(const r of data){
+    const rawAmt=m.amount>-1?String(r[m.amount]||""):"";
+    if(/[$£¥₺]|\b(USD|GBP|CHF|TRY|MAD|PLN)\b/i.test(rawAmt)){if(!limit)IMP.skipped++;continue}
     const date=parseDate(r[m.date]);
     let amount=m.amount>-1?parseAmount(r[m.amount]):(-Math.abs(parseAmount(r[m.debit]))+Math.abs(parseAmount(r[m.credit])));
     const st=m.status>-1?strip(r[m.status]):"",cur=m.currency>-1?(r[m.currency]||"").trim().toUpperCase():"";
     if(!limit&&(/declin|revert|fail|refus|rejet|pending|attente|annul|geweigerd/.test(st)||(cur&&cur!=="EUR"))){IMP.skipped++;continue}
-    if(m.fee>-1){const fee=Math.abs(parseAmount(r[m.fee]));if(fee)amount=Math.round((amount-fee)*100)/100}
+    const bal=m.balance>-1&&String(r[m.balance]||"").trim()!==""?parseAmount(r[m.balance]):null;
+    if(m.fee>-1){const fee=Math.abs(parseAmount(r[m.fee]));const already=bal!=null&&prevBal!=null&&Math.abs(prevBal+amount-bal)<.011;if(fee&&!already)amount=Math.round((amount-fee)*100)/100}
+    if(bal!=null)prevBal=bal;
     const kind=m.type>-1?(r[m.type]||"").trim():"";
     const parts=[];[m.label1,m.label2,m.label3].forEach(i=>{const v=i>-1?(r[i]||"").trim():"";if(v&&!parts.some(p=>strip(p).includes(strip(v))))parts.push(v)});
     let label=sanitize(parts.join(" — "));
@@ -557,7 +612,7 @@ function commitImport(){
   const batch={id:uid(),at:new Date().toISOString(),name:IMP.name,n:0,merged:[]};
   let n=0,mg=0;
   IMP.fresh.filter(r=>r.include).forEach(r=>{
-    const t={id:uid(),date:r.date,amount:r.amount,label:r.label,cat:/^(topup|top-up|exchange)$/i.test(r.kind||"")?"epargne":guessCat(r.label,r.amount),note:"",src:"import",fp:r.fp,batch:batch.id,acct:IMP.acct||""};
+    const t={id:uid(),date:r.date,amount:r.amount,label:r.label,cat:/^(topup|top-up|exchange|rechargez|recharge|changes?|opwaarderen|wissel)$/i.test(strip(r.kind||""))?"epargne":guessCat(r.label,r.amount),note:"",src:"import",fp:r.fp,batch:batch.id,acct:IMP.acct||""};
     if(r.merge&&r.doMerge){t.cat=r.merge.cat||t.cat;t.note=r.merge.note||"";batch.merged.push(r.merge);DB.tx=DB.tx.filter(x=>x.id!==r.merge.id);mg++}
     DB.tx.push(t);n++;
   });
