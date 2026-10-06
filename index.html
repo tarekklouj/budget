@@ -214,7 +214,7 @@ const CATS=[
 const CAT=Object.fromEntries(CATS.map(c=>[c.id,c]));
 const NONE={id:null,name:"À classer",color:"#9AA39E"};
 const catOf=t=>CAT[t.cat]||NONE;
-const DEFAULT_RULES=[["electrabel","logement"],["administration communale","autre"],["commune de","autre"],["decompte de frais","autre"],["interets-frais","autre"],["temu","shopping"],["media markt","shopping"],["c&a","shopping"],["primark","shopping"],["hema","shopping"],["librairie","shopping"],["piscine","loisirs"],["indigo park","transport"],["interparking","transport"],["boucherie","courses"],["bakkerij","courses"],["boulangerie","courses"],["kebap","restos"],["kebab","restos"],["pizza","restos"],["snack","restos"],["friterie","restos"],["frituur","restos"],["doccle","logement"],["revolut","epargne"],["compte d'investissement","epargne"],["vers le compte","epargne"],["coffre","epargne"],["digital assets","epargne"],["retrait","autre"],["atm ","autre"],["geldopname","autre"],["top-up","epargne"],["vers ing","epargne"],["uber eats","restos"],["deliveroo","restos"],["takeaway","restos"],["restaurant","restos"],["mcdonald","restos"],["starbucks","restos"],["burger king","restos"],
+const DEFAULT_RULES=[["electrabel","logement"],["administration communale","autre"],["commune de","autre"],["decompte de frais","autre"],["interets-frais","autre"],["temu","shopping"],["media markt","shopping"],["c&a","shopping"],["primark","shopping"],["hema","shopping"],["librairie","shopping"],["piscine","loisirs"],["indigo park","transport"],["interparking","transport"],["boucherie","courses"],["bakkerij","courses"],["boulangerie","courses"],["kebap","restos"],["kebab","restos"],["pizza","restos"],["snack","restos"],["friterie","restos"],["frituur","restos"],["doccle","logement"],["revolut","epargne"],["compte d'investissement","epargne"],["vers le compte","epargne"],["coffre","epargne"],["digital assets","epargne"],["retrait","autre"],["atm ","autre"],["geldopname","autre"],["top-up","epargne"],["uber eats","restos"],["deliveroo","restos"],["takeaway","restos"],["restaurant","restos"],["mcdonald","restos"],["starbucks","restos"],["burger king","restos"],
  ["delhaize","courses"],["colruyt","courses"],["aldi","courses"],["lidl","courses"],["carrefour","courses"],["albert heijn","courses"],["okay ","courses"],["spar ","courses"],["intermarche","courses"],["cora ","courses"],["match ","courses"],
  ["sncb","transport"],["nmbs","transport"],["stib","transport"],["mivb","transport"],["de lijn","transport"],["total","transport"],["shell","transport"],["q8","transport"],["esso","transport"],["lukoil","transport"],["uber","transport"],["parking","transport"],
  ["proximus","abos"],["telenet","abos"],["orange","abos"],["voo ","abos"],["scarlet","abos"],["mobile vikings","abos"],["netflix","abos"],["spotify","abos"],["disney","abos"],["apple.com","abos"],["youtube","abos"],["prime video","abos"],
@@ -357,15 +357,19 @@ function renderHome(){
   const unc=DB.tx.filter(t=>!t.cat).length;
   const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=-tx.filter(t=>t.cat===c.id&&t.amount<0).reduce((a,t)=>a+t.amount,0),b=+DB.budgets[c.id]*mult,over=s>b;
     return `<div class="bud"><div class="between"><span>${esc(c.name)}</span><span${over?' style="color:var(--warn)"':""}><b>${money(s)}</b> <span class="muted">/ ${money(b)}</span></span></div><div class="bar ${over?"over":""}"><i style="width:${Math.min(100,s/b*100)}%;${over?"":"background:"+c.color}"></i></div>${over?`<span class="small" style="color:var(--warn);font-weight:700">Dépassé de ${money(s-b)}</span>`:""}</div>`}).join("");
+  const uncSpent=-tx.filter(t=>!t.cat&&t.amount<0).reduce((a,t)=>a+t.amount,0),intOut=-tx.filter(t=>t.cat==="epargne"&&t.amount<0).reduce((a,t)=>a+t.amount,0);
+  const extra=(uncSpent>0?`<div class="bud"><div class="between"><span>À classer <span class="small">(compté dans le total)</span></span><span><b>${money(uncSpent)}</b> <button class="link" data-jump="unc">Classer</button></span></div></div>`:"")
+    +(intOut>0?`<div class="bud"><div class="between"><span>Virements internes <span class="small">(non comptés)</span></span><span><b>${money(intOut)}</b> <button class="link" data-jump="cat:epargne">Voir</button></span></div></div>`:"");
   const recent=[...tx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   $("#v-home").innerHTML=`${hero}
     ${unc?`<button class="banner" id="goUnc"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"></path><circle cx="12" cy="12" r="10"></circle></svg><span style="flex:1"><b>${unc} opération${unc>1?"s":""} à classer</b><br><span class="small">Classe-les une fois, l'appli s'en souviendra.</span></span></button>`:""}
     <div class="between"><h2>Budgets ${Y?"de l'année":"du mois"}</h2><button class="link" id="editBud">${buds?"Modifier":"Définir"}</button></div>
-    ${buds?`<div class="list">${buds}</div>`:`<div class="card small">Fixe un budget par catégorie pour voir ce qu'il te reste à dépenser.</div>`}
+    ${buds||extra?`<div class="list">${buds}${extra}</div>`:`<div class="card small">Fixe un budget par catégorie pour voir ce qu'il te reste à dépenser.</div>`}
     <div class="between"><h2>Dernières opérations</h2>${tx.length?`<button class="link" id="seeAll">Tout voir</button>`:""}</div>
     ${recent.length?`<div class="list">${recent.map(txRow).join("")}</div>`:emptyMonthCard()}`;
   bindTxRows($("#v-home"));
   const g=$("#goUnc");if(g)g.onclick=openBulk;
+  document.querySelectorAll("#v-home [data-jump]").forEach(b=>b.onclick=()=>{const j=b.dataset.jump;if(j==="unc")return openBulk();TXF={q:"",f:j};go("tx")});
   const gl=$("#goLast");if(gl)gl.onclick=()=>{MONTH=lastMonthWithData();render()};
   $("#editBud").onclick=()=>{go("set");setTimeout(()=>{const e=$("#budSec");if(e)e.scrollIntoView()},50)};
   const sa=$("#seeAll");if(sa)sa.onclick=()=>go("tx");
@@ -374,7 +378,7 @@ function renderHome(){
 
 /* ============ TRANSACTIONS ============ */
 function renderTx(){
-  const all=TXF.f==="unc"?DB.tx.filter(t=>!t.cat):periodTx();
+  const all=TXF.f==="unc"?DB.tx.filter(t=>!t.cat):TXF.f.startsWith("cat:")?periodTx().filter(t=>t.cat===TXF.f.slice(4)):periodTx();
   const q=strip(TXF.q);
   let list=all.filter(t=>(TXF.f==="out"?t.amount<0:TXF.f==="in"?t.amount>0:true)&&(!q||strip(t.label+" "+(t.note||"")+" "+catOf(t).name).includes(q)));
   list.sort((a,b)=>b.date.localeCompare(a.date));
