@@ -190,7 +190,7 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const enc=new TextEncoder(),dec=new TextDecoder();
 const EUR=new Intl.NumberFormat("fr-BE",{style:"currency",currency:"EUR"});
-const money=n=>EUR.format(n);
+const money=n=>EUR.format(Math.abs(n)<0.005?0:n);
 const signed=n=>(n>0?"+":n<0?"−":"")+EUR.format(Math.abs(n));
 const uid=()=>crypto.getRandomValues(new Uint32Array(2)).join("-")+"-"+Date.now().toString(36);
 const todayISO=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
@@ -281,7 +281,8 @@ $("#lockBtn").onclick=async()=>{clearTimeout(saveTimer);await persist();showLock
 
 /* ============ app shell ============ */
 let VIEW="home",MONTH=ym(todayISO()),TXF={q:"",f:"all"};
-function enterApp(){$("#lock").hidden=true;$("#app").hidden=false;lastAct=Date.now();render()}
+function lastMonthWithData(){let m="";DB.tx.forEach(t=>{if(t.date>m)m=t.date});return m?ym(m):""}
+function enterApp(){$("#lock").hidden=true;$("#app").hidden=false;lastAct=Date.now();if(DB.tx.length&&!monthTx(MONTH).length){const lm=lastMonthWithData();if(lm)MONTH=lm}render()}
 function monthLabel(m){const [y,mm]=m.split("-").map(Number);return new Date(y,mm-1,1).toLocaleDateString("fr-BE",{month:"long",year:"numeric"})}
 function shiftMonth(m,d){let [y,mm]=m.split("-").map(Number);mm+=d;while(mm<1){mm+=12;y--}while(mm>12){mm-=12;y++}return y+"-"+String(mm).padStart(2,"0")}
 $("#prevM").onclick=()=>{MONTH=shiftMonth(MONTH,-1);render()};
@@ -312,6 +313,12 @@ function txRow(t){const c=catOf(t);return `<button class="tx" data-id="${esc(t.i
 function bindTxRows(root){root.querySelectorAll(".tx[data-id]").forEach(b=>b.onclick=()=>openTxSheet(DB.tx.find(t=>t.id===b.dataset.id)))}
 
 /* ============ HOME ============ */
+function emptyMonthCard(){
+  if(!DB.tx.length)return `<div class="card empty"><p style="margin:0 0 12px"><b>Aucune opération pour l'instant.</b></p><button class="btn primary" id="homeImport">Importer un relevé</button></div>`;
+  const ds=DB.tx.map(t=>t.date).sort(),lm=ym(ds[ds.length-1]);
+  const f=d=>new Date(d).toLocaleDateString("fr-BE",{day:"numeric",month:"long",year:"numeric"});
+  return `<div class="card empty"><p style="margin:0 0 6px"><b>Aucune opération en ${esc(monthLabel(MONTH))}.</b></p><p class="small" style="margin:0 0 14px">Tes ${DB.tx.length} opérations vont du ${f(ds[0])} au ${f(ds[ds.length-1])}.</p><button class="btn primary" id="goLast">Voir ${esc(monthLabel(lm))}</button></div>`;
+}
 function renderHome(){
   const tx=monthTx(MONTH),spent=-tx.filter(isExpense).reduce((a,t)=>a+t.amount,0),inc=tx.filter(isIncome).reduce((a,t)=>a+t.amount,0);
   const budTotal=Object.values(DB.budgets).reduce((a,b)=>a+(+b||0),0);
@@ -336,9 +343,10 @@ function renderHome(){
     <div class="between"><h2>Budgets du mois</h2><button class="link" id="editBud">${buds?"Modifier":"Définir"}</button></div>
     ${buds?`<div class="list">${buds}</div>`:`<div class="card small">Fixe un budget par catégorie pour voir ce qu'il te reste à dépenser.</div>`}
     <div class="between"><h2>Dernières opérations</h2>${tx.length?`<button class="link" id="seeAll">Tout voir</button>`:""}</div>
-    ${recent.length?`<div class="list">${recent.map(txRow).join("")}</div>`:`<div class="card empty"><p style="margin:0 0 12px"><b>Aucune opération ce mois-ci.</b></p><button class="btn primary" id="homeImport">Importer un relevé</button></div>`}`;
+    ${recent.length?`<div class="list">${recent.map(txRow).join("")}</div>`:emptyMonthCard()}`;
   bindTxRows($("#v-home"));
-  const g=$("#goUnc");if(g)g.onclick=()=>{TXF={q:"",f:"unc"};go("tx")};
+  const g=$("#goUnc");if(g)g.onclick=openBulk;
+  const gl=$("#goLast");if(gl)gl.onclick=()=>{MONTH=lastMonthWithData();render()};
   $("#editBud").onclick=()=>{go("set");setTimeout(()=>{const e=$("#budSec");if(e)e.scrollIntoView()},50)};
   const sa=$("#seeAll");if(sa)sa.onclick=()=>go("tx");
   const hi=$("#homeImport");if(hi)hi.onclick=startImport;
@@ -357,7 +365,9 @@ function renderTx(){
   $("#v-tx").innerHTML=`<div class="between"><h1 style="margin:0">Opérations</h1><button class="btn primary" id="impBtn">Importer</button></div>
     <input class="input" id="q" type="search" placeholder="Rechercher…" value="${esc(TXF.q)}" aria-label="Rechercher" style="margin:14px 0 10px">
     <div class="chips">${chips.map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${TXF.f===k}">${esc(l)}</button>`).join("")}</div>
+    ${TXF.f==="unc"&&list.length?`<button class="btn primary block" id="bulkBtn" style="margin-top:12px">Classer en lot par commerçant</button>`:""}
     ${html||`<div class="empty">${TXF.f==="unc"?"Tout est classé. 👍":"Aucune opération."}</div>`}`;
+  const bb=$("#bulkBtn");if(bb)bb.onclick=openBulk;
   bindTxRows($("#v-tx"));
   $("#impBtn").onclick=startImport;
   const qi=$("#q");qi.oninput=()=>{TXF.q=qi.value;const p=qi.selectionStart;renderTx();const n=$("#q");n.focus();n.setSelectionRange(p,p)};
@@ -399,6 +409,33 @@ function openTxSheet(t){
     save();closeSheet();render();toast(n?`Enregistré · ${n} autre${n>1?"s":""} opération${n>1?"s":""} reclassée${n>1?"s":""}`:"Enregistré");
   };
   const d=$("#del");if(d)d.onclick=()=>{if(confirm("Supprimer cette opération ?")){DB.tx=DB.tx.filter(x=>x.id!==cur.id);save();closeSheet();render();toast("Supprimée")}};
+}
+
+/* ============ bulk classify ============ */
+function groupKey(t){return merchantKey(t.label)||strip(niceLabel(t.label)).slice(0,30)}
+function openBulk(){
+  const unc=DB.tx.filter(t=>!t.cat);
+  if(!unc.length){closeSheet();render();return toast("Tout est classé 👍")}
+  const g={};unc.forEach(t=>{const k=groupKey(t);(g[k]=g[k]||{k,label:niceLabel(t.label),n:0,sum:0,ids:[]});g[k].n++;g[k].sum+=t.amount;g[k].ids.push(t.id)});
+  const groups=Object.values(g).sort((a,b)=>b.n-a.n||Math.abs(b.sum)-Math.abs(a.sum));
+  sheet(`<h3>Classer en lot</h3><p class="small" style="margin-top:-6px">${unc.length} opérations regroupées par commerçant. Choisis une catégorie une fois : tout le groupe est classé et l'appli retient la règle.</p>
+    <div class="list">${groups.slice(0,80).map((x,i)=>`<button class="tx" data-g="${i}"><span class="av" style="background:#9AA39E">${x.n}</span><span class="t"><b>${esc(x.label)}</b><span>${x.n} opération${x.n>1?"s":""}</span></span><span class="a ${x.sum>0?"pos":""}">${signed(x.sum)}</span></button>`).join("")}</div>
+    <button class="btn block" id="oneByOne" style="margin-top:12px">Voir la liste complète</button>`);
+  document.querySelectorAll("[data-g]").forEach(b=>b.onclick=()=>pickGroup(groups[+b.dataset.g]));
+  $("#oneByOne").onclick=()=>{closeSheet();TXF={q:"",f:"unc"};go("tx")};
+}
+function pickGroup(x){
+  const inc=x.sum>0;
+  sheet(`<h3>${esc(x.label)}</h3><p class="small" style="margin-top:-6px">${x.n} opération${x.n>1?"s":""} · ${signed(x.sum)}</p>
+    <div class="catgrid">${catChips(null,true)}</div>
+    <label class="check" style="border:none"><input type="checkbox" id="rememb" ${x.k?"checked":""} ${x.k?"":"disabled"}><span>Retenir pour les prochains imports${x.k?` (« ${esc(x.k)} »)`:""}</span></label>
+    <button class="btn block" id="back">Retour</button>`);
+  document.querySelectorAll(".sheet .chip[data-c]").forEach(b=>b.onclick=()=>{
+    const cat=b.dataset.c;const ids=new Set(x.ids);DB.tx.forEach(t=>{if(ids.has(t.id))t.cat=cat});
+    if($("#rememb").checked&&x.k){DB.rules=DB.rules.filter(r=>r.match!==x.k);DB.rules.unshift({match:x.k,cat});DB.tx.forEach(t=>{if(!t.cat&&merchantKey(t.label)===x.k)t.cat=cat})}
+    save();toast(`${x.n} classée${x.n>1?"s":""} en ${CAT[cat].name}`);openBulk();render();
+  });
+  $("#back").onclick=openBulk;
 }
 
 /* ============ parsing ============ */
