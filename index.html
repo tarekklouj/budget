@@ -209,11 +209,11 @@ const CATS=[
  {id:"abos",name:"Abonnements",color:"#1F8A9E"},{id:"sante",name:"Santé",color:"#C0394B"},
  {id:"loisirs",name:"Loisirs",color:"#8E4BA6"},{id:"shopping",name:"Shopping",color:"#B5527A"},
  {id:"autre",name:"Autre",color:"#6F7A75"},{id:"revenus",name:"Revenus",color:"#2E8B57",income:true},
- {id:"epargne",name:"Épargne & virements",color:"#5D6B8A",neutral:true}];
+ {id:"epargne",name:"Virements internes & épargne",color:"#5D6B8A",neutral:true}];
 const CAT=Object.fromEntries(CATS.map(c=>[c.id,c]));
 const NONE={id:null,name:"À classer",color:"#9AA39E"};
 const catOf=t=>CAT[t.cat]||NONE;
-const DEFAULT_RULES=[["uber eats","restos"],["deliveroo","restos"],["takeaway","restos"],["restaurant","restos"],["mcdonald","restos"],["starbucks","restos"],["burger king","restos"],
+const DEFAULT_RULES=[["revolut","epargne"],["retrait","autre"],["atm ","autre"],["geldopname","autre"],["top-up","epargne"],["vers ing","epargne"],["uber eats","restos"],["deliveroo","restos"],["takeaway","restos"],["restaurant","restos"],["mcdonald","restos"],["starbucks","restos"],["burger king","restos"],
  ["delhaize","courses"],["colruyt","courses"],["aldi","courses"],["lidl","courses"],["carrefour","courses"],["albert heijn","courses"],["okay ","courses"],["spar ","courses"],["intermarche","courses"],["cora ","courses"],["match ","courses"],
  ["sncb","transport"],["nmbs","transport"],["stib","transport"],["mivb","transport"],["de lijn","transport"],["total","transport"],["shell","transport"],["q8","transport"],["esso","transport"],["lukoil","transport"],["uber","transport"],["parking","transport"],
  ["proximus","abos"],["telenet","abos"],["orange","abos"],["voo ","abos"],["scarlet","abos"],["mobile vikings","abos"],["netflix","abos"],["spotify","abos"],["disney","abos"],["apple.com","abos"],["youtube","abos"],["prime video","abos"],
@@ -299,7 +299,16 @@ const monthTx=m=>DB.tx.filter(t=>ym(t.date)===m);
 const isExpense=t=>t.amount<0&&!(CAT[t.cat]&&CAT[t.cat].neutral);
 const isIncome=t=>t.amount>0&&!(CAT[t.cat]&&CAT[t.cat].neutral);
 function avatar(t){const c=catOf(t);const l=(t.label||"?").trim().charAt(0).toUpperCase();return `<span class="av" style="background:${c.color}" aria-hidden="true">${esc(l)}</span>`}
-function txRow(t){const c=catOf(t);return `<button class="tx" data-id="${esc(t.id)}">${avatar(t)}<span class="t"><b>${esc(t.label||"Sans libellé")}</b><span>${esc(c.name)} · ${new Date(t.date).toLocaleDateString("fr-BE",{day:"numeric",month:"short"})}${t.src==="import"?"":" · manuel"}</span></span><span class="a ${t.amount>0?"pos":""}">${signed(t.amount)}</span></button>`}
+function niceLabel(l){
+  const first=String(l||"").split(" — ")[0];
+  const c=first.replace(/^(paiement|betaling)\s+(bancontact|maestro|visa|mastercard|par carte|debit card|met kaart)\s*/i,"")
+    .replace(/^(achat|aankoop)\s+/i,"")
+    .replace(/^(virement|overschrijving)\s+(europ[ée]en|europese|instantan[ée]|instant)?\s*(vers|naar|en votre faveur( de)?|van)?\s*/i,"")
+    .replace(/^(domiciliation|domiciliëring|europese domiciliëring)\s*/i,"")
+    .replace(/\b\d{2}\/\d{2}(\/\d{2,4})?\b|\b\d{1,2}[:h]\d{2}\b/g,"").replace(/\s+/g," ").trim();
+  return c||first||"Sans libellé";
+}
+function txRow(t){const c=catOf(t);return `<button class="tx" data-id="${esc(t.id)}">${avatar(t)}<span class="t"><b>${esc(niceLabel(t.label))}</b><span>${esc(c.name)} · ${new Date(t.date).toLocaleDateString("fr-BE",{day:"numeric",month:"short"})}${t.acct?" · "+esc(t.acct):t.src==="import"?"":" · manuel"}</span></span><span class="a ${t.amount>0?"pos":""}">${signed(t.amount)}</span></button>`}
 function bindTxRows(root){root.querySelectorAll(".tx[data-id]").forEach(b=>b.onclick=()=>openTxSheet(DB.tx.find(t=>t.id===b.dataset.id)))}
 
 /* ============ HOME ============ */
@@ -433,12 +442,13 @@ function parseCSV(text){
   return rows.map(r=>r.map(x=>x.trim()));
 }
 const H={
-  date:["date d'execution","date execution","date comptable","date de comptabilisation","uitvoeringsdatum","boekingsdatum","booking date","transaction date","date","datum","date valeur","valutadatum"],
+  date:["completed date","date d'execution","date execution","date comptable","date de comptabilisation","uitvoeringsdatum","boekingsdatum","booking date","transaction date","date","datum","date valeur","valutadatum"],
   amount:["montant","bedrag","amount"],
   debit:["debit","debet","uitgaven","sortie"],credit:["credit","inkomsten","entree"],
   label1:["nom de la contrepartie","nom contrepartie","naam tegenpartij","naam van de tegenpartij","contrepartie","tegenpartij","counterparty","beneficiaire"],
-  label2:["communication","mededeling","libelle","description","omschrijving","details","detail","transaction"],
-  ref:["numero de sequence","numero de transaction","sequence","volgnummer","transactienummer","reference","referentie"]
+  label2:["communication","mededeling","libelle","description","omschrijving","details","detail","message","bericht"],
+  fee:["fee","frais","kosten"],status:["state","statut","status"],currency:["currency","devise","munteenheid"],type:["type"],
+  ref:["numero de mouvement","omzetnummer","numero de sequence","numero de transaction","sequence","volgnummer","transactienummer","reference","referentie"]
 };
 function findCol(headers,keys,exclude){const hs=headers.map(strip);for(const k of keys){const i=hs.findIndex((h,j)=>!exclude.includes(j)&&(h===k||h.includes(k)));if(i>-1)return i}return -1}
 function detect(rows){
@@ -448,8 +458,11 @@ function detect(rows){
   const m={date:pick("date"),amount:pick("amount"),debit:-1,credit:-1,label1:pick("label1"),label2:-1,label3:-1,ref:pick("ref")};
   m.label2=pick("label2");m.label3=pick("label2");
   if(m.amount<0){m.debit=pick("debit");m.credit=pick("credit")}
-  if(m.label1<0&&m.label2>-1){m.label1=m.label2;m.label2=m.label3;m.label3=-1}
-  return {hi,headers,m,sig:fnv(headers.map(strip).join("|"))};
+  if(m.label1<0&&m.label2>-1){m.label1=m.label2;m.label2=m.label3;m.label3=pick("label2")}
+  m.fee=pick("fee");m.status=pick("status");m.currency=pick("currency");m.type=pick("type");
+  const hs=strip(headers.join("|"));
+  const acct=/product/.test(hs)&&/started date/.test(hs)?"Revolut":/numero de mouvement|omzetnummer|nom du compte|naam van de rekening/.test(hs)?"ING":"";
+  return {hi,headers,m,acct,sig:fnv(headers.map(strip).join("|"))};
 }
 
 /* ============ import wizard ============ */
@@ -461,6 +474,8 @@ $("#fileIn").onchange=async e=>{
   const rows=parseCSV(decodeFile(await f.arrayBuffer()));
   if(rows.length<2)return toast("Ce fichier ne ressemble pas à un relevé CSV");
   const d=detect(rows);if(DB.mappings[d.sig])Object.assign(d.m,DB.mappings[d.sig]);
+  if(DB.mappings[d.sig]&&DB.mappings[d.sig].acct)d.acct=DB.mappings[d.sig].acct;
+  if(!d.acct)d.acct=/revolut/i.test(f.name)?"Revolut":/\bing\b|ing[_-]/i.test(f.name)?"ING":"";
   IMP={name:f.name,rows,...d};showMapping();
 };
 function colSelect(id,val,optional){return `<select class="input" id="${id}">${optional?`<option value="-1">— aucune —</option>`:""}${IMP.headers.map((h,i)=>`<option value="${i}" ${+val===i?"selected":""}>${esc(h)}</option>`).join("")}</select>`}
@@ -469,6 +484,7 @@ function showMapping(){
   const ok=m.date>-1&&(m.amount>-1||m.debit>-1||m.credit>-1)&&m.label1>-1;
   sheet(`<h3>Importer « ${esc(IMP.name)} »</h3>
     <p class="small" style="margin-top:-6px">${data.length} lignes trouvées. ${ok?"Les colonnes ont été détectées automatiquement, vérifie-les :":"Indique quelle colonne correspond à quoi :"}</p>
+    <label class="f">Compte<input class="input" id="acct" value="${esc(IMP.acct||"")}" placeholder="ING, Revolut…"></label>
     <label class="f">Date${colSelect("mDate",m.date)}</label>
     <label class="f">Montant (positif/négatif)${colSelect("mAmt",m.amount,true)}</label>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><label class="f">ou Débit${colSelect("mDeb",m.debit,true)}</label><label class="f">et Crédit${colSelect("mCre",m.credit,true)}</label></div>
@@ -477,26 +493,30 @@ function showMapping(){
     <label class="f">Référence unique (si ta banque en donne une)${colSelect("mRef",m.ref,true)}</label>
     <div id="pv"></div>
     <button class="btn primary block" id="analyse">Analyser</button>`);
-  const read=()=>({date:+$("#mDate").value,amount:+$("#mAmt").value,debit:+$("#mDeb").value,credit:+$("#mCre").value,label1:+$("#mL1").value,label2:+$("#mL2").value,label3:+$("#mL3").value,ref:+$("#mRef").value});
+  const read=()=>Object.assign({},IMP.m,{date:+$("#mDate").value,amount:+$("#mAmt").value,debit:+$("#mDeb").value,credit:+$("#mCre").value,label1:+$("#mL1").value,label2:+$("#mL2").value,label3:+$("#mL3").value,ref:+$("#mRef").value});
   const pv=()=>{IMP.m=read();const r=buildRows(3);$("#pv").innerHTML=`<p class="small" style="font-weight:700;margin:4px 0 6px">Aperçu</p><div class="scroll"><table class="pv"><tr><th>Date</th><th>Montant</th><th>Libellé</th></tr>${r.map(x=>`<tr><td>${esc(x.date||"⚠️")}</td><td>${x.amount?signed(x.amount):"⚠️"}</td><td>${esc(x.label)}</td></tr>`).join("")}</table></div><p></p>`};
   document.querySelectorAll(".sheet select").forEach(s=>s.onchange=pv);pv();
-  $("#analyse").onclick=()=>{IMP.m=read();DB.mappings[IMP.sig]=IMP.m;analyse()};
+  $("#analyse").onclick=()=>{IMP.m=read();IMP.acct=$("#acct").value.trim();DB.mappings[IMP.sig]=Object.assign({},IMP.m,{acct:IMP.acct});analyse()};
 }
 function buildRows(limit){
-  const m=IMP.m,out=[];const data=IMP.rows.slice(IMP.hi+1);
+  const m=IMP.m,out=[];const data=IMP.rows.slice(IMP.hi+1);IMP.skipped=0;
   for(const r of data){
     const date=parseDate(r[m.date]);
     let amount=m.amount>-1?parseAmount(r[m.amount]):(-Math.abs(parseAmount(r[m.debit]))+Math.abs(parseAmount(r[m.credit])));
+    const st=m.status>-1?strip(r[m.status]):"",cur=m.currency>-1?(r[m.currency]||"").trim().toUpperCase():"";
+    if(!limit&&(/declin|revert|fail|refus|rejet|pending|attente|annul|geweigerd/.test(st)||(cur&&cur!=="EUR"))){IMP.skipped++;continue}
+    if(m.fee>-1){const fee=Math.abs(parseAmount(r[m.fee]));if(fee)amount=Math.round((amount-fee)*100)/100}
+    const kind=m.type>-1?(r[m.type]||"").trim():"";
     const parts=[];[m.label1,m.label2,m.label3].forEach(i=>{const v=i>-1?(r[i]||"").trim():"";if(v&&!parts.some(p=>strip(p).includes(strip(v))))parts.push(v)});
     let label=sanitize(parts.join(" — "));
     const ref=m.ref>-1?(r[m.ref]||"").trim():"";
     if(!date||!amount){if(limit)out.push({date,amount,label});continue}
-    out.push({date,amount,label,ref});
+    out.push({date,amount,label,ref,kind});
     if(limit&&out.length>=limit)break;
   }
   return out;
 }
-function fpOf(r){return r.ref?"r:"+strip(r.ref).replace(/\s/g,""):"h:"+fnv(r.date+"|"+r.amount.toFixed(2)+"|"+strip(r.label).replace(/[^a-z0-9]/g,""))}
+function fpOf(r){return r.ref?"r:"+strip(r.ref).replace(/\s/g,"")+"|"+r.date+"|"+r.amount.toFixed(2):"h:"+fnv(r.date+"|"+r.amount.toFixed(2)+"|"+strip(r.label).replace(/[^a-z0-9]/g,""))}
 function analyse(){
   const rows=buildRows(0);
   if(!rows.length)return toast("Aucune ligne valide : vérifie les colonnes Date et Montant");
@@ -519,6 +539,7 @@ function showSummary(){
   sheet(`<h3>Résultat de l'analyse</h3>
     <div class="sum"><div><span>Nouvelles opérations</span><span>${plain.length}</span></div>
     <div><span>Déjà importées (ignorées)</span><span>${IMP.dups.length}</span></div>
+    ${IMP.skipped?`<div><span>En attente, annulées ou autre devise</span><span>${IMP.skipped}</span></div>`:""}
     <div><span>À vérifier</span><span>${checks.length}</span></div>
     <div><span>Liées à tes saisies manuelles</span><span>${merges.length}</span></div></div>
     ${checks.length?`<h2 style="margin-top:6px">À vérifier</h2><p class="small" style="margin-top:-4px">Même date et même montant qu'une opération déjà importée, mais libellé différent. Coche celles qui sont vraiment nouvelles.</p>
@@ -536,7 +557,7 @@ function commitImport(){
   const batch={id:uid(),at:new Date().toISOString(),name:IMP.name,n:0,merged:[]};
   let n=0,mg=0;
   IMP.fresh.filter(r=>r.include).forEach(r=>{
-    const t={id:uid(),date:r.date,amount:r.amount,label:r.label,cat:guessCat(r.label,r.amount),note:"",src:"import",fp:r.fp,batch:batch.id};
+    const t={id:uid(),date:r.date,amount:r.amount,label:r.label,cat:/^(topup|top-up|exchange)$/i.test(r.kind||"")?"epargne":guessCat(r.label,r.amount),note:"",src:"import",fp:r.fp,batch:batch.id,acct:IMP.acct||""};
     if(r.merge&&r.doMerge){t.cat=r.merge.cat||t.cat;t.note=r.merge.note||"";batch.merged.push(r.merge);DB.tx=DB.tx.filter(x=>x.id!==r.merge.id);mg++}
     DB.tx.push(t);n++;
   });
