@@ -225,14 +225,21 @@ const DEFAULT_RULES=[["electrabel","logement"],["administration communale","autr
  ["decathlon","loisirs"],["kinepolis","loisirs"],["ugc","loisirs"],["basic-fit","loisirs"],["basic fit","loisirs"],
  ["epargne","epargne"],["spaarrekening","epargne"],["compte d'epargne","epargne"]];
 const STOP=new Set("paiement carte bancontact maestro visa mastercard achat betaling debit debet domiciliation virement europeen europese overschrijving instantane instant date heure avec par via payconiq apple google pay contactless sans contact numero ref reference mededeling communication bruxelles brussel belgique belgie".split(" "));
-function merchantKey(label){return strip(niceLabel(label)).replace(/[^a-z0-9 .&'-]/g," ").split(/\s+/).filter(w=>w.length>=3&&!STOP.has(w)&&!/\d/.test(w)).slice(0,2).join(" ")}
+function mTokens(label){return strip(label).replace(/[^a-z0-9 .&'-]/g," ").split(/\s+/).map(w=>w.replace(/^[.'&-]+|[.'&-]+$/g,"")).filter(w=>w.length>=3&&!STOP.has(w)&&!/\d/.test(w))}
+function merchantKey(label){return mTokens(niceLabel(label)).slice(0,2).join(" ")}
+/* mémoire : catégorie déjà choisie pour ce commerçant (opérations déjà classées) */
+let HIST=null;
+function buildHist(){HIST={};[...DB.tx].sort((a,b)=>a.date.localeCompare(b.date)).forEach(t=>{if(t.cat&&t.cat!=="revenus"){const k=merchantKey(t.label);if(k)HIST[k]=t.cat}});return HIST}
+function ruleHit(match,s,toks){if(s.includes(match))return true;const rt=mTokens(match);return rt.length>0&&rt.every(w=>toks.has(w))}
 function guessCat(label,amount){
-  const s=" "+strip(label)+" ";
-  const nl=strip(niceLabel(label));if((DB.holders||[]).some(h=>h&&(nl==="de "+h||nl==="vers "+h)))return "epargne";
-  for(const r of DB.rules)if(s.includes(r.match))return r.cat;
+  const s=" "+strip(label)+" ",toks=new Set(mTokens(label));
+  for(const r of DB.rules)if(ruleHit(r.match,s,toks))return r.cat;
+  const k=merchantKey(label),h=HIST||buildHist();
+  if(k&&h[k])return h[k];
   for(const [m,c] of DEFAULT_RULES)if(s.includes(m))return c;
   return amount>0?"revenus":null;
 }
+function autoClassify(){buildHist();let n=0;DB.tx.forEach(t=>{if(!t.cat){const c=guessCat(t.label,t.amount);if(c){t.cat=c;n++}}});if(n)save();return n}
 
 /* ============ crypto vault ============ */
 const VKEY="budget:vault:v1";
@@ -243,7 +250,7 @@ async function sealWith(key,salt,obj){const iv=crypto.getRandomValues(new Uint8A
 async function openVault(vault,pass){const salt=unb64(vault.salt);const key=await deriveKey(pass,salt);const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(vault.iv)},key,unb64(vault.ct));return {key,salt,data:JSON.parse(dec.decode(pt))}}
 function readVault(){try{return JSON.parse(localStorage.getItem(VKEY))}catch(e){return null}}
 async function persist(){if(!KEY||!DB)return;try{localStorage.setItem(VKEY,JSON.stringify(await sealWith(KEY,SALT,DB)))}catch(e){toast("Enregistrement impossible : stockage plein ou bloqué")}}
-function save(){clearTimeout(saveTimer);saveTimer=setTimeout(persist,250)}
+function save(){HIST=null;clearTimeout(saveTimer);saveTimer=setTimeout(persist,250)}
 
 /* ============ lock screen ============ */
 function showLock(msg){
@@ -290,7 +297,7 @@ const monthsInPeriod=()=>{if(PERIOD!=="year")return 1;const now=todayISO();retur
 document.querySelectorAll("#perSeg button").forEach(b=>b.onclick=()=>{PERIOD=b.dataset.p;document.querySelectorAll("#perSeg button").forEach(x=>x.setAttribute("aria-pressed",x===b));if(TXF.f!=="unc")TXF.f="all";render()});
 function lastMonthWithData(){let m="";DB.tx.forEach(t=>{if(t.date>m)m=t.date});return m?ym(m):""}
 function fixLabels(){let n=0;DB.tx.forEach(t=>{const c=String(t.label||"").replace(/^\[compte\]\s—\s/,"");if(c!==t.label){t.label=c;n++}});if(n)save()}
-function enterApp(){fixLabels();$("#lock").hidden=true;$("#app").hidden=false;lastAct=Date.now();if(DB.tx.length&&!periodTx().length){const lm=lastMonthWithData();if(lm)MONTH=lm}render()}
+function enterApp(){fixLabels();const ac=autoClassify();if(ac)setTimeout(()=>toast(`${ac} opération${ac>1?"s":""} classée${ac>1?"s":""} automatiquement`),300);$("#lock").hidden=true;$("#app").hidden=false;lastAct=Date.now();if(DB.tx.length&&!periodTx().length){const lm=lastMonthWithData();if(lm)MONTH=lm}render()}
 function monthLabel(m){const [y,mm]=m.split("-").map(Number);return new Date(y,mm-1,1).toLocaleDateString("fr-BE",{month:"long",year:"numeric"})}
 function shiftMonth(m,d){let [y,mm]=m.split("-").map(Number);mm+=d;while(mm<1){mm+=12;y--}while(mm>12){mm-=12;y++}return y+"-"+String(mm).padStart(2,"0")}
 $("#prevM").onclick=()=>{MONTH=shiftMonth(MONTH,PERIOD==="year"?-12:-1);render()};
@@ -703,6 +710,7 @@ function showSummary(){
 function holderName(){if(!IMP||IMP.m.holder==null||IMP.m.holder<0)return "";const r=IMP.rows[IMP.hi+1]||[];return strip(cleanName(r[IMP.m.holder]||""))}
 function commitImport(){
   const hn=holderName();if(hn){DB.holders=DB.holders||[];if(!DB.holders.includes(hn))DB.holders.push(hn)}
+  buildHist();
   (IMP.dups||[]).forEach(r=>{const t=DB.tx.find(x=>x.src==="import"&&x.fp===r.fp);if(t&&t.label!==r.label){t.label=r.label;if(!t.cat)t.cat=guessCat(r.label,r.amount)}});
   const batch={id:uid(),at:new Date().toISOString(),name:IMP.name,n:0,merged:[]};
   let n=0,mg=0;
