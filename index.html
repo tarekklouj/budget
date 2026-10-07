@@ -314,8 +314,11 @@ function render(){
   ({home:renderHome,tx:renderTx,stats:renderStats,set:renderSet})[VIEW]();
 }
 const monthTx=m=>DB.tx.filter(t=>ym(t.date)===m);
-const isExpense=t=>t.amount<0&&!(CAT[t.cat]&&CAT[t.cat].neutral);
-const isIncome=t=>t.amount>0&&!(CAT[t.cat]&&CAT[t.cat].neutral);
+/* dépense = catégorie de dépense (un remboursement positif la réduit) ; revenu = catégorie Revenus */
+const isNeutral=t=>!!(CAT[t.cat]&&CAT[t.cat].neutral);
+const isRefund=t=>t.amount>0&&!!t.cat&&t.cat!=="revenus"&&!isNeutral(t);
+const isExpense=t=>!isNeutral(t)&&t.cat!=="revenus"&&(t.amount<0||isRefund(t));
+const isIncome=t=>t.amount>0&&!isNeutral(t)&&(t.cat==="revenus"||!t.cat);
 function avatar(t){const c=catOf(t);const l=(t.label||"?").trim().charAt(0).toUpperCase();return `<span class="av" style="background:${c.color}" aria-hidden="true">${esc(l)}</span>`}
 function titleCase(s){return /[a-z]/.test(s)?s:s.toLowerCase().replace(/(^|[\s\-'&(.\/])([a-zà-ÿ])/g,(m,a,b)=>a+b.toUpperCase())}
 function cleanName(n){return titleCase(String(n).replace(/,.*$/,"").replace(/\s\d{4}\b.*$/,"").replace(/^(m|mr|mme|mlle|mevr|mevrouw|dhr|heer|mw)\.?\s+/i,"").replace(/\s+/g," ").trim())}
@@ -335,7 +338,7 @@ function niceLabel(l){
     .replace(/\b\d{2}\/\d{2}(\/\d{2,4})?\b|\b\d{1,2}[:h]\d{2}\b/g,"").replace(/^[\s\-:]+|[\s\-:]+$/g,"").replace(/\s+/g," ").trim();
   return titleCase(c||s||"Sans libellé");
 }
-function txRow(t){const c=catOf(t);return `<button class="tx" data-id="${esc(t.id)}">${avatar(t)}<span class="t"><b>${esc(niceLabel(t.label))}</b><span>${esc(c.name)} · ${new Date(t.date).toLocaleDateString("fr-BE",{day:"numeric",month:"short"})}${t.acct?" · "+esc(t.acct):t.src==="import"?"":" · manuel"}</span></span><span class="a ${t.amount>0?"pos":""}">${signed(t.amount)}</span></button>`}
+function txRow(t){const c=catOf(t);return `<button class="tx" data-id="${esc(t.id)}">${avatar(t)}<span class="t"><b>${esc(niceLabel(t.label))}</b><span>${isRefund(t)?"↩︎ Remboursement · ":""}${esc(c.name)} · ${new Date(t.date).toLocaleDateString("fr-BE",{day:"numeric",month:"short"})}${t.acct?" · "+esc(t.acct):t.src==="import"?"":" · manuel"}</span></span><span class="a ${t.amount>0?"pos":""}">${signed(t.amount)}</span></button>`}
 function bindTxRows(root){root.querySelectorAll(".tx[data-id]").forEach(b=>b.onclick=()=>openTxSheet(DB.tx.find(t=>t.id===b.dataset.id)))}
 
 /* ============ HOME ============ */
@@ -345,6 +348,27 @@ function emptyMonthCard(){
   const f=d=>new Date(d).toLocaleDateString("fr-BE",{day:"numeric",month:"long",year:"numeric"});
   return `<div class="card empty"><p style="margin:0 0 6px"><b>Aucune opération en ${esc(periodLabel())}.</b></p><p class="small" style="margin:0 0 14px">Tes ${DB.tx.length} opérations vont du ${f(ds[0])} au ${f(ds[ds.length-1])}.</p><button class="btn primary" id="goLast">Voir ${esc(monthLabel(lm))}</button></div>`;
 }
+function bilanHTML(tx,spent,inc){
+  const plan=DB.plan||{},goal=+plan.save||0,saved=inc-spent;
+  const prevM=shiftMonth(MONTH,-1),ptx=monthTx(prevM),pSpent=-ptx.filter(isExpense).reduce((a,t)=>a+t.amount,0);
+  const byCat=list=>{const o={};list.filter(isExpense).forEach(t=>{const k=t.cat||"_";o[k]=(o[k]||0)-t.amount});return o};
+  const a=byCat(tx),b=byCat(ptx);
+  const ups=Object.keys(a).map(k=>({k,d:a[k]-(b[k]||0)})).filter(x=>x.d>20).sort((x,y)=>y.d-x.d).slice(0,3);
+  const over=CATS.filter(c=>DB.budgets[c.id]>0&&(a[c.id]||0)>DB.budgets[c.id]);
+  const mName=new Date(MONTH+"-01").toLocaleDateString("fr-BE",{month:"long"});
+  const diff=pSpent?Math.round((spent-pSpent)/pSpent*100):null;
+  let goalLine="";
+  if(goal>0)goalLine=saved>=goal?`✅ Objectif d'épargne atteint : <b>+${money(saved-goal)}</b> au-delà des ${money(goal)}`:`⚠️ Objectif d'épargne manqué de <b>${money(goal-saved)}</b>`;
+  return `<div class="hero"><span style="font-weight:700">Bilan de ${esc(mName)}</span>
+    <div class="amt">${signed(saved)}</div><span style="font-size:14px;font-weight:600">${saved>=0?"épargnés ce mois-ci":"dépensés en plus de tes revenus"}</span>
+    <div class="meta"><span>Entrées ${money(inc)}</span><span>Sorties ${money(spent)}</span></div>
+    ${goalLine?`<div style="font-size:15px;border-top:1px solid rgba(255,255,255,.25);padding-top:10px">${goalLine}</div>`:""}</div>
+    <div class="card" style="margin-top:12px;display:grid;gap:10px">
+      ${diff!==null?`<div class="between"><span>Dépenses vs ${esc(new Date(prevM+"-01").toLocaleDateString("fr-BE",{month:"long"}))}</span><b style="color:${diff>0?"var(--warn)":"var(--accent)"}">${diff>0?"+":""}${diff} %</b></div>`:""}
+      ${ups.length?`<div><span class="small" style="font-weight:700">En hausse</span>${ups.map(x=>`<div class="between small"><span>${esc((x.k==="_"?NONE:CAT[x.k]).name)}</span><span style="color:var(--warn);font-weight:700">+${money(x.d)}</span></div>`).join("")}</div>`:""}
+      ${over.length?`<div class="between small"><span>Budgets dépassés</span><span style="color:var(--warn);font-weight:700">${over.map(c=>esc(c.name)).join(", ")}</span></div>`:`<div class="small">${Object.keys(DB.budgets).length?"👍 Aucun budget dépassé.":""}</div>`}
+    </div>`;
+}
 function renderHome(){
   const Y=PERIOD==="year",mult=Y?12:1,nm=monthsInPeriod();
   const tx=periodTx(),spent=-tx.filter(isExpense).reduce((a,t)=>a+t.amount,0),inc=tx.filter(isIncome).reduce((a,t)=>a+t.amount,0);
@@ -352,7 +376,9 @@ function renderHome(){
   const isCur=!Y&&MONTH===ym(todayISO());
   const [y,m]=MONTH.split("-").map(Number),dim=new Date(y,m,0).getDate(),left=isCur?dim-new Date().getDate()+1:0;
   let hero;
-  if(budTotal>0){
+  const past=!Y&&MONTH<ym(todayISO());
+  if(past&&tx.length){hero=bilanHTML(tx,spent,inc)}
+  else if(budTotal>0){
     const budIds=new Set(Object.keys(DB.budgets).filter(k=>DB.budgets[k]>0));
     const spentBud=-tx.filter(t=>isExpense(t)&&budIds.has(t.cat)).reduce((a,t)=>a+t.amount,0),offBud=spent-spentBud;
     const rest=budTotal-spentBud,pct=Math.min(100,spentBud/budTotal*100);
@@ -364,9 +390,9 @@ function renderHome(){
     hero=`<div class="hero"><span style="font-weight:700">Solde ${Y?"de l'année":"du mois"}</span><div class="amt">${signed(inc-spent)}</div>
       <div class="meta"><span>Entrées ${money(inc)}</span><span>Sorties ${money(spent)}</span></div>${Y?`<div class="meta" style="opacity:.9"><span>Moyenne ${money(spent/nm)}/mois</span><span>Épargné ${inc?Math.round((inc-spent)/inc*100):0} %</span></div>`:""}</div>`;
   }
-  const plan=DB.plan||{income:0,save:0};let planCard="";
+  const plan=DB.plan||{income:0,save:0};let planCard="";const pastM=!Y&&MONTH<ym(todayISO())&&tx.length;
   const pi=planIncome();
-  if(pi.v>0){
+  if(pi.v>0&&!pastM){
     const avail=pi.v-plan.save*mult,un=avail-budTotal,realSave=inc-spent;
     planCard=`<div class="card" style="margin-top:12px;display:grid;gap:8px">
       <div class="between"><b>Plan ${Y?"annuel":"du mois"}</b><button class="link" id="editPlan">Modifier</button></div>
@@ -379,7 +405,7 @@ function renderHome(){
     </div>`;
   }
   const unc=DB.tx.filter(t=>!t.cat).length;
-  const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=-tx.filter(t=>t.cat===c.id&&t.amount<0).reduce((a,t)=>a+t.amount,0),b=+DB.budgets[c.id]*mult,over=s>b;
+  const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=Math.max(0,-tx.filter(t=>t.cat===c.id).reduce((a,t)=>a+t.amount,0)),b=+DB.budgets[c.id]*mult,over=s>b;
     return `<div class="bud"><div class="between"><span>${esc(c.name)}</span><span${over?' style="color:var(--warn)"':""}><b>${money(s)}</b> <span class="muted">/ ${money(b)}</span></span></div><div class="bar ${over?"over":""}"><i style="width:${Math.min(100,s/b*100)}%;${over?"":"background:"+c.color}"></i></div>${over?`<span class="small" style="color:var(--warn);font-weight:700">Dépassé de ${money(s-b)}</span>`:""}</div>`}).join("");
   const uncSpent=-tx.filter(t=>!t.cat&&t.amount<0).reduce((a,t)=>a+t.amount,0),intOut=-tx.filter(t=>t.cat==="epargne"&&t.amount<0).reduce((a,t)=>a+t.amount,0);
   const extra=(uncSpent>0?`<div class="bud"><div class="between"><span>À classer <span class="small">(compté dans le total)</span></span><span><b>${money(uncSpent)}</b> <button class="link" data-jump="unc">Classer</button></span></div></div>`:"")
@@ -726,17 +752,50 @@ function commitImport(){
 }
 
 /* ============ STATS ============ */
+function median(a){const s=[...a].sort((x,y)=>x-y),m=s.length>>1;return s.length%2?s[m]:(s[m-1]+s[m])/2}
+function detectRecurring(){
+  const last=lastMonthWithData();if(!last)return [];
+  const from=shiftMonth(last,-5),g={};
+  DB.tx.filter(t=>t.amount<0&&!isNeutral(t)&&ym(t.date)>=from).forEach(t=>{const k=merchantKey(t.label)||strip(niceLabel(t.label));if(!k)return;(g[k]=g[k]||[]).push(t)});
+  const out=[];
+  Object.entries(g).forEach(([k,list])=>{
+    list.sort((a,b)=>a.date.localeCompare(b.date));
+    const amts=list.map(t=>-t.amount),med=median(amts);
+    const similar=list.filter(t=>Math.abs(-t.amount-med)<=Math.max(2,med*.2));
+    const months=new Set(similar.map(t=>ym(t.date)));
+    if(similar.length<3)return;
+    const gaps=[];for(let i=1;i<similar.length;i++)gaps.push((Date.parse(similar[i].date)-Date.parse(similar[i-1].date))/864e5);
+    const gap=median(gaps);
+    let freq=null;if(gap>=25&&gap<=35&&months.size>=3)freq="mois";else if(gap>=6&&gap<=8&&similar.length>=4)freq="semaine";
+    if(!freq)return;
+    const lastT=similar[similar.length-1],prevT=similar[similar.length-2];
+    const monthly=freq==="mois"?-lastT.amount:-lastT.amount*52/12;
+    const change=Math.round((-lastT.amount+prevT.amount)*100)/100;
+    const next=new Date(Date.parse(lastT.date)+Math.round(gap)*864e5);
+    const stale=(Date.now()-Date.parse(lastT.date))/864e5>gap*1.8;
+    out.push({k,name:niceLabel(lastT.label),cat:lastT.cat,freq,monthly,last:-lastT.amount,change,next,stale});
+  });
+  return out.sort((a,b)=>b.monthly-a.monthly);
+}
+function recurringHTML(){
+  const r=detectRecurring();if(!r.length)return "";
+  const active=r.filter(x=>!x.stale),tot=active.reduce((a,x)=>a+x.monthly,0);
+  return `<h2>Paiements récurrents</h2>
+    <div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px"><div><div class="small">Par mois</div><b style="font-size:20px">${money(tot)}</b></div><div><div class="small">Par an</div><b style="font-size:20px">${money(tot*12)}</b></div></div>
+    <div class="list">${r.map(x=>`<div class="tx" style="cursor:default${x.stale?";opacity:.55":""}"><span class="av" style="background:${catOf({cat:x.cat}).color}" aria-hidden="true">${esc(x.name.charAt(0).toUpperCase())}</span><span class="t"><b>${esc(x.name)}</b><span>${x.stale?"Plus vu récemment, peut-être arrêté":`Chaque ${x.freq} · prochain vers le ${x.next.toLocaleDateString("fr-BE",{day:"numeric",month:"short"})}`}${Math.abs(x.change)>=0.5&&!x.stale?` · <b style="color:${x.change>0?"var(--warn)":"var(--accent)"}">${x.change>0?"↑ +":"↓ "}${money(Math.abs(x.change))}</b>`:""}</span></span><span class="a">${money(x.last)}</span></div>`).join("")}</div>
+    <p class="small">Détectés automatiquement : même commerçant, montant proche, chaque mois ou chaque semaine.</p>`;
+}
 function renderStats(){
   const Y=PERIOD==="year",all=periodTx(),tx=all.filter(isExpense),total=-tx.reduce((a,t)=>a+t.amount,0),inc=all.filter(isIncome).reduce((a,t)=>a+t.amount,0),nm=monthsInPeriod();
   const by={};tx.forEach(t=>{const k=t.cat||"_";by[k]=(by[k]||0)-t.amount});
-  const parts=Object.entries(by).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({c:k==="_"?NONE:CAT[k],v}));
+  const parts=Object.entries(by).filter(([k,v])=>v>0.005).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({c:k==="_"?NONE:CAT[k],v}));
   const C=2*Math.PI*70;let off=0;
   const ring=parts.map(p=>{const L=total?p.v/total*C:0;const s=`<circle cx="90" cy="90" r="70" fill="none" stroke="${p.c.color}" stroke-width="22" stroke-dasharray="${Math.max(0,L-1.5)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 90 90)"></circle>`;off+=L;return s}).join("");
   const months=Y?[...Array(12)].map((_,i)=>YEAR()+"-"+String(i+1).padStart(2,"0")):[...Array(6)].map((_,i)=>shiftMonth(MONTH,i-5));
   const series=months.map(m=>{const t=monthTx(m);return {m,out:-t.filter(isExpense).reduce((a,x)=>a+x.amount,0),inc:t.filter(isIncome).reduce((a,x)=>a+x.amount,0)}});
   const mx=Math.max(1,...series.map(s=>Math.max(s.out,s.inc)));
   const merch={};tx.forEach(t=>{const k=merchantKey(t.label)||t.label;merch[k]=(merch[k]||0)-t.amount});
-  const top=Object.entries(merch).sort((a,b)=>b[1]-a[1]).slice(0,5);
+  const top=Object.entries(merch).filter(([k,v])=>v>0).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const withData=series.filter(x=>x.out>0),hi=withData.sort((a,b)=>b.out-a.out)[0];
   const catRows=parts.map(p=>`<div class="tx" style="cursor:default"><span class="dot" style="background:${p.c.color}"></span><span class="t"><b>${esc(p.c.name)}</b>${Y?`<span>${money(p.v/nm)} / mois en moyenne</span>`:""}</span><span class="a">${money(p.v)}</span></div>`).join("");
   $("#v-stats").innerHTML=`<h1>Statistiques ${Y?esc(YEAR()):""}</h1>
@@ -752,6 +811,7 @@ function renderStats(){
     <h2>${Y?"Mois par mois":"6 derniers mois"}</h2>
     <div class="card"><div class="row small" style="gap:14px"><span class="row" style="gap:6px"><span class="dot" style="background:var(--warnFill)"></span>Dépenses</span><span class="row" style="gap:6px"><span class="dot" style="background:var(--accent)"></span>Revenus</span></div>
       <div class="bars" style="grid-template-columns:repeat(${series.length},minmax(0,1fr));gap:${Y?4:8}px">${series.map(s=>`<div class="c"><div class="pair"><i style="height:${s.out/mx*110}px;background:var(--warnFill)" title="Dépenses ${money(s.out)}"></i><i style="height:${s.inc/mx*110}px;background:var(--accent)" title="Revenus ${money(s.inc)}"></i></div><span class="lab">${Y?new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"narrow"}):new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"short"})}</span></div>`).join("")}</div></div>
+    ${recurringHTML()}
     ${top.length?`<h2>Où part ton argent</h2><div class="list">${top.map(([k,v])=>`<div class="tx" style="cursor:default"><span class="t"><b style="text-transform:capitalize">${esc(k)}</b></span><span class="a">${money(v)}</span></div>`).join("")}</div>`:""}`;
 }
 
