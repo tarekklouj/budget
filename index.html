@@ -358,11 +358,12 @@ function renderHome(){
       <div class="meta"><span>Entrées ${money(inc)}</span><span>Sorties ${money(spent)}</span></div>${Y?`<div class="meta" style="opacity:.9"><span>Moyenne ${money(spent/nm)}/mois</span><span>Épargné ${inc?Math.round((inc-spent)/inc*100):0} %</span></div>`:""}</div>`;
   }
   const plan=DB.plan||{income:0,save:0};let planCard="";
-  if(plan.income>0){
-    const avail=(plan.income-plan.save)*mult,un=avail-budTotal,realSave=inc-spent;
+  const pi=planIncome();
+  if(pi.v>0){
+    const avail=pi.v-plan.save*mult,un=avail-budTotal,realSave=inc-spent;
     planCard=`<div class="card" style="margin-top:12px;display:grid;gap:8px">
       <div class="between"><b>Plan ${Y?"annuel":"du mois"}</b><button class="link" id="editPlan">Modifier</button></div>
-      <div class="between small"><span>Revenu prévu</span><span>${money(plan.income*mult)}</span></div>
+      <div class="between small"><span>Revenus<br><span style="font-size:12px">${esc(pi.src)}</span></span><span>${money(pi.v)}</span></div>
       <div class="between small"><span>− Objectif d'épargne</span><span>${money(plan.save*mult)}</span></div>
       <div class="between"><span style="font-weight:700">= Disponible</span><b>${money(avail)}</b></div>
       <div class="between small"><span>Réparti dans les budgets</span><span>${money(budTotal)}</span></div>
@@ -739,18 +740,27 @@ function renderStats(){
 }
 
 /* ============ SETTINGS ============ */
-function avgIncome(){const cur=ym(todayISO());const vals=[];for(let i=1;i<=6&&vals.length<3;i++){const m=shiftMonth(cur,-i);const v=monthTx(m).filter(isIncome).reduce((a,t)=>a+t.amount,0);if(v>0)vals.push(v)}return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0}
+const salaryOf=list=>list.filter(t=>t.amount>0&&t.cat==="revenus").reduce((a,t)=>a+t.amount,0);
+function avgIncome(ref){const cur=ref||ym(todayISO());const vals=[];for(let i=1;i<=6&&vals.length<3;i++){const v=salaryOf(monthTx(shiftMonth(cur,-i)));if(v>0)vals.push(v)}return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length*100)/100:0}
+/* revenu utilisé par le plan : relevés d'abord, saisie manuelle seulement si choisie */
+function planIncome(){
+  const p=DB.plan||{};
+  if(p.mode==="manual"&&p.income>0)return {v:p.income*(PERIOD==="year"?12:1),src:"Saisi manuellement"};
+  if(PERIOD==="year"){const y=salaryOf(periodTx());const n=monthsInPeriod();const avg=y/Math.max(1,n);return {v:y+(12-n>0&&YEAR()===todayISO().slice(0,4)?avg*(12-n):0),src:YEAR()===todayISO().slice(0,4)&&n<12?`Reçu ${money(y)} + estimation des mois restants`:"Revenus de l'année (relevés)"}}
+  const real=salaryOf(monthTx(MONTH));if(real>0)return {v:real,src:"Revenus reçus ce mois (relevés)"};
+  const a=avgIncome(MONTH);return a?{v:a,src:"Moyenne des 3 derniers mois (pas encore reçu ce mois)"}:{v:0,src:""};
+}
 function planHTML(){
-  const p=DB.plan||{income:0,save:0},bt=Object.values(DB.budgets).reduce((a,b)=>a+(+b||0),0),sug=avgIncome();
-  const avail=p.income-p.save,un=avail-bt;
+  const p=DB.plan||{},bt=Object.values(DB.budgets).reduce((a,b)=>a+(+b||0),0),man=p.mode==="manual";
+  const cur=ym(todayISO()),real=salaryOf(monthTx(cur)),avg=avgIncome(cur);
+  const auto=real>0?real:avg,inc=man&&p.income>0?p.income:auto,avail=inc-(p.save||0),un=avail-bt;
   return `<div class="card">
-    <p class="small" style="margin:0 0 12px">Indique ton revenu et ce que tu veux mettre de côté : l'appli calcule ce qui est disponible pour tes budgets.</p>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <label class="f">Revenu mensuel<input class="input" inputmode="decimal" data-plan="income" placeholder="${sug?String(sug).replace(".",","):"—"}" value="${p.income?String(p.income).replace(".",","):""}"></label>
-      <label class="f">Épargne visée<input class="input" inputmode="decimal" data-plan="save" placeholder="—" value="${p.save?String(p.save).replace(".",","):""}"></label>
-    </div>
-    ${!p.income&&sug?`<button class="link" id="useSug" style="margin:-4px 0 8px">Utiliser ma moyenne des derniers mois : ${money(sug)}</button>`:""}
-    ${p.income?`<div class="sum" style="margin:4px 0 0"><div><span>Disponible pour les budgets</span><span>${money(avail)}</span></div><div><span>Déjà réparti</span><span>${money(bt)}</span></div><div style="color:${un<-0.005?"var(--warn)":"var(--accent)"}"><span>${un<-0.005?"Trop réparti de":"Reste à répartir"}</span><span>${money(Math.abs(un))}</span></div></div>`:""}
+    <p class="small" style="margin:0 0 12px">Tes revenus sont calculés automatiquement depuis tes relevés importés (catégorie Revenus). Indique juste ce que tu veux mettre de côté.</p>
+    <div class="seg" style="margin-bottom:12px"><button data-pm="auto" aria-pressed="${!man}">Automatique</button><button data-pm="manual" aria-pressed="${man}">Manuel</button></div>
+    ${man?`<label class="f">Revenu mensuel<input class="input" inputmode="decimal" data-plan="income" value="${p.income?String(p.income).replace(".",","):""}" placeholder="${auto?String(auto).replace(".",","):"—"}"></label>`
+      :`<div class="sum" style="margin:0 0 12px"><div><span>${real>0?"Reçu ce mois":"Moyenne des 3 derniers mois"}</span><span>${auto?money(auto):"—"}</span></div></div>${auto?"":`<p class="small" style="margin:-4px 0 12px">Aucun revenu trouvé : importe un relevé ou classe ton salaire en « Revenus ».</p>`}`}
+    <label class="f">Épargne visée par mois<input class="input" inputmode="decimal" data-plan="save" placeholder="—" value="${p.save?String(p.save).replace(".",","):""}"></label>
+    ${inc?`<div class="sum" style="margin:4px 0 0"><div><span>Disponible pour les budgets</span><span>${money(avail)}</span></div><div><span>Déjà réparti</span><span>${money(bt)}</span></div><div style="color:${un<-0.005?"var(--warn)":"var(--accent)"}"><span>${un<-0.005?"Trop réparti de":"Reste à répartir"}</span><span>${money(Math.abs(un))}</span></div></div>`:""}
   </div>`;
 }
 function renderSet(){
@@ -777,7 +787,7 @@ function renderSet(){
   const refreshPlan=()=>{const y=scrollY;renderSet();scrollTo({top:y})};
   DB.plan=DB.plan||{income:0,save:0};
   document.querySelectorAll("[data-plan]").forEach(i=>i.onchange=()=>{DB.plan[i.dataset.plan]=Math.abs(parseAmount(i.value))||0;save();refreshPlan()});
-  const us=$("#useSug");if(us)us.onclick=()=>{DB.plan.income=avgIncome();save();refreshPlan()};
+  document.querySelectorAll("[data-pm]").forEach(b=>b.onclick=()=>{DB.plan.mode=b.dataset.pm;save();refreshPlan()});
   document.querySelectorAll("[data-rr]").forEach(b=>b.onclick=()=>{DB.rules.splice(+b.dataset.rr,1);save();renderSet()});
   document.querySelectorAll("[data-ub]").forEach(b=>b.onclick=()=>{const bt=DB.batches.find(x=>x.id===b.dataset.ub);if(!bt||!confirm(`Retirer les ${bt.n} opérations importées depuis « ${bt.name} » ?`))return;DB.tx=DB.tx.filter(t=>t.batch!==bt.id).concat(bt.merged||[]);DB.batches=DB.batches.filter(x=>x!==bt);save();renderSet();toast("Import annulé")});
   $("#setImp").onclick=startImport;
