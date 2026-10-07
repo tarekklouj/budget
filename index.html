@@ -237,7 +237,7 @@ function guessCat(label,amount){
 /* ============ crypto vault ============ */
 const VKEY="budget:vault:v1";
 let KEY=null,SALT=null,DB=null,saveTimer=null;
-const blank=()=>({v:1,tx:[],budgets:{},rules:[],batches:[],mappings:{},settings:{lockMin:5}});
+const blank=()=>({v:1,tx:[],budgets:{},rules:[],batches:[],mappings:{},settings:{lockMin:5},plan:{income:0,save:0}});
 async function deriveKey(pass,salt){const base=await crypto.subtle.importKey("raw",enc.encode(pass),"PBKDF2",false,["deriveKey"]);return crypto.subtle.deriveKey({name:"PBKDF2",salt,iterations:310000,hash:"SHA-256"},base,{name:"AES-GCM",length:256},false,["encrypt","decrypt"])}
 async function sealWith(key,salt,obj){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(obj)));return {app:"budget",v:1,kdf:"PBKDF2-SHA256-310000",salt:b64(salt),iv:b64(iv),ct:b64(new Uint8Array(ct))}}
 async function openVault(vault,pass){const salt=unb64(vault.salt);const key=await deriveKey(pass,salt);const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(vault.iv)},key,unb64(vault.ct));return {key,salt,data:JSON.parse(dec.decode(pt))}}
@@ -346,13 +346,29 @@ function renderHome(){
   const [y,m]=MONTH.split("-").map(Number),dim=new Date(y,m,0).getDate(),left=isCur?dim-new Date().getDate()+1:0;
   let hero;
   if(budTotal>0){
-    const rest=budTotal-spent,pct=Math.min(100,spent/budTotal*100);
+    const budIds=new Set(Object.keys(DB.budgets).filter(k=>DB.budgets[k]>0));
+    const spentBud=-tx.filter(t=>isExpense(t)&&budIds.has(t.cat)).reduce((a,t)=>a+t.amount,0),offBud=spent-spentBud;
+    const rest=budTotal-spentBud,pct=Math.min(100,spentBud/budTotal*100);
     hero=`<div class="hero"><div class="between"><span style="font-weight:700">Reste à dépenser</span><span style="font-size:14px">Budget ${Y?"annuel ":""}${money(budTotal)}</span></div>
       <div class="amt">${money(rest)}</div><div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="meta"><span>${money(spent)} dépensés</span>${isCur&&rest>0?`<span>${left} j · ${money(rest/left)}/jour</span>`:Y?`<span>Moyenne ${money(spent/nm)}/mois</span>`:""}</div></div>`;
+      <div class="meta"><span>${money(spentBud)} dépensés sur budget</span>${isCur&&rest>0?`<span>${left} j · ${money(rest/left)}/jour</span>`:Y?`<span>Moyenne ${money(spent/nm)}/mois</span>`:""}</div>
+      ${offBud>0.005?`<div class="meta" style="opacity:.92;border-top:1px solid rgba(255,255,255,.25);padding-top:10px"><span>Hors budget : ${money(offBud)}</span><span>Total sorties : ${money(spent)}</span></div>`:""}</div>`;
   }else{
     hero=`<div class="hero"><span style="font-weight:700">Solde ${Y?"de l'année":"du mois"}</span><div class="amt">${signed(inc-spent)}</div>
       <div class="meta"><span>Entrées ${money(inc)}</span><span>Sorties ${money(spent)}</span></div>${Y?`<div class="meta" style="opacity:.9"><span>Moyenne ${money(spent/nm)}/mois</span><span>Épargné ${inc?Math.round((inc-spent)/inc*100):0} %</span></div>`:""}</div>`;
+  }
+  const plan=DB.plan||{income:0,save:0};let planCard="";
+  if(plan.income>0){
+    const avail=(plan.income-plan.save)*mult,un=avail-budTotal,realSave=inc-spent;
+    planCard=`<div class="card" style="margin-top:12px;display:grid;gap:8px">
+      <div class="between"><b>Plan ${Y?"annuel":"du mois"}</b><button class="link" id="editPlan">Modifier</button></div>
+      <div class="between small"><span>Revenu prévu</span><span>${money(plan.income*mult)}</span></div>
+      <div class="between small"><span>− Objectif d'épargne</span><span>${money(plan.save*mult)}</span></div>
+      <div class="between"><span style="font-weight:700">= Disponible</span><b>${money(avail)}</b></div>
+      <div class="between small"><span>Réparti dans les budgets</span><span>${money(budTotal)}</span></div>
+      <div class="between" style="font-weight:700;color:${un<-0.005?"var(--warn)":"var(--accent)"}"><span>${un<-0.005?"Budgets trop élevés de":"Pas encore réparti"}</span><span>${money(Math.abs(un))}</span></div>
+      ${inc>0?`<div class="between small" style="border-top:1px solid var(--line);padding-top:8px"><span>Épargne réelle ${Y?"cette année":"ce mois"}</span><span style="font-weight:700;color:${realSave>=plan.save*mult?"var(--accent)":"var(--warn)"}">${signed(realSave)}</span></div>`:""}
+    </div>`;
   }
   const unc=DB.tx.filter(t=>!t.cat).length;
   const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=-tx.filter(t=>t.cat===c.id&&t.amount<0).reduce((a,t)=>a+t.amount,0),b=+DB.budgets[c.id]*mult,over=s>b;
@@ -361,7 +377,7 @@ function renderHome(){
   const extra=(uncSpent>0?`<div class="bud"><div class="between"><span>À classer <span class="small">(compté dans le total)</span></span><span><b>${money(uncSpent)}</b> <button class="link" data-jump="unc">Classer</button></span></div></div>`:"")
     +(intOut>0?`<div class="bud"><div class="between"><span>Virements internes <span class="small">(non comptés)</span></span><span><b>${money(intOut)}</b> <button class="link" data-jump="cat:epargne">Voir</button></span></div></div>`:"");
   const recent=[...tx].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
-  $("#v-home").innerHTML=`${hero}
+  $("#v-home").innerHTML=`${hero}${planCard}
     ${unc?`<button class="banner" id="goUnc"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4M12 17h.01"></path><circle cx="12" cy="12" r="10"></circle></svg><span style="flex:1"><b>${unc} opération${unc>1?"s":""} à classer</b><br><span class="small">Classe-les une fois, l'appli s'en souviendra.</span></span></button>`:""}
     <div class="between"><h2>Budgets ${Y?"de l'année":"du mois"}</h2><button class="link" id="editBud">${buds?"Modifier":"Définir"}</button></div>
     ${buds||extra?`<div class="list">${buds}${extra}</div>`:`<div class="card small">Fixe un budget par catégorie pour voir ce qu'il te reste à dépenser.</div>`}
@@ -370,6 +386,7 @@ function renderHome(){
   bindTxRows($("#v-home"));
   const g=$("#goUnc");if(g)g.onclick=openBulk;
   document.querySelectorAll("#v-home [data-jump]").forEach(b=>b.onclick=()=>{const j=b.dataset.jump;if(j==="unc")return openBulk();TXF={q:"",f:j};go("tx")});
+  const ep=$("#editPlan");if(ep)ep.onclick=()=>{go("set");setTimeout(()=>{const e=$("#planSec");if(e)e.scrollIntoView()},50)};
   const gl=$("#goLast");if(gl)gl.onclick=()=>{MONTH=lastMonthWithData();render()};
   $("#editBud").onclick=()=>{go("set");setTimeout(()=>{const e=$("#budSec");if(e)e.scrollIntoView()},50)};
   const sa=$("#seeAll");if(sa)sa.onclick=()=>go("tx");
@@ -722,8 +739,24 @@ function renderStats(){
 }
 
 /* ============ SETTINGS ============ */
+function avgIncome(){const cur=ym(todayISO());const vals=[];for(let i=1;i<=6&&vals.length<3;i++){const m=shiftMonth(cur,-i);const v=monthTx(m).filter(isIncome).reduce((a,t)=>a+t.amount,0);if(v>0)vals.push(v)}return vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0}
+function planHTML(){
+  const p=DB.plan||{income:0,save:0},bt=Object.values(DB.budgets).reduce((a,b)=>a+(+b||0),0),sug=avgIncome();
+  const avail=p.income-p.save,un=avail-bt;
+  return `<div class="card">
+    <p class="small" style="margin:0 0 12px">Indique ton revenu et ce que tu veux mettre de côté : l'appli calcule ce qui est disponible pour tes budgets.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <label class="f">Revenu mensuel<input class="input" inputmode="decimal" data-plan="income" placeholder="${sug?String(sug).replace(".",","):"—"}" value="${p.income?String(p.income).replace(".",","):""}"></label>
+      <label class="f">Épargne visée<input class="input" inputmode="decimal" data-plan="save" placeholder="—" value="${p.save?String(p.save).replace(".",","):""}"></label>
+    </div>
+    ${!p.income&&sug?`<button class="link" id="useSug" style="margin:-4px 0 8px">Utiliser ma moyenne des derniers mois : ${money(sug)}</button>`:""}
+    ${p.income?`<div class="sum" style="margin:4px 0 0"><div><span>Disponible pour les budgets</span><span>${money(avail)}</span></div><div><span>Déjà réparti</span><span>${money(bt)}</span></div><div style="color:${un<-0.005?"var(--warn)":"var(--accent)"}"><span>${un<-0.005?"Trop réparti de":"Reste à répartir"}</span><span>${money(Math.abs(un))}</span></div></div>`:""}
+  </div>`;
+}
 function renderSet(){
   $("#v-set").innerHTML=`<h1>Réglages</h1>
+    <h2 id="planSec">Plan mensuel</h2>
+    ${planHTML()}
     <h2 id="budSec">Budgets mensuels</h2>
     <div class="list">${CATS.filter(c=>!c.income&&!c.neutral).map(c=>`<div class="bud"><div class="between"><span class="row" style="gap:8px"><span class="dot" style="background:${c.color}"></span>${esc(c.name)}</span><input class="input" style="width:120px;text-align:right" inputmode="decimal" data-b="${c.id}" placeholder="—" value="${DB.budgets[c.id]?String(DB.budgets[c.id]).replace(".",","):""}" aria-label="Budget ${esc(c.name)}"></div></div>`).join("")}</div>
     <h2>Règles de classement</h2>
@@ -740,7 +773,11 @@ function renderSet(){
     <h2>Zone de danger</h2>
     <button class="btn danger block" id="wipe">Effacer toutes les données</button>
     <p class="small" style="text-align:center;margin-top:20px">Budget · tes données ne quittent jamais cet appareil.</p>`;
-  document.querySelectorAll("[data-b]").forEach(i=>i.onchange=()=>{const v=parseAmount(i.value);if(v>0)DB.budgets[i.dataset.b]=Math.abs(v);else delete DB.budgets[i.dataset.b];save();toast("Budget enregistré")});
+  document.querySelectorAll("[data-b]").forEach(i=>i.onchange=()=>{const v=parseAmount(i.value);if(v>0)DB.budgets[i.dataset.b]=Math.abs(v);else delete DB.budgets[i.dataset.b];save();toast("Budget enregistré");refreshPlan()});
+  const refreshPlan=()=>{const y=scrollY;renderSet();scrollTo({top:y})};
+  DB.plan=DB.plan||{income:0,save:0};
+  document.querySelectorAll("[data-plan]").forEach(i=>i.onchange=()=>{DB.plan[i.dataset.plan]=Math.abs(parseAmount(i.value))||0;save();refreshPlan()});
+  const us=$("#useSug");if(us)us.onclick=()=>{DB.plan.income=avgIncome();save();refreshPlan()};
   document.querySelectorAll("[data-rr]").forEach(b=>b.onclick=()=>{DB.rules.splice(+b.dataset.rr,1);save();renderSet()});
   document.querySelectorAll("[data-ub]").forEach(b=>b.onclick=()=>{const bt=DB.batches.find(x=>x.id===b.dataset.ub);if(!bt||!confirm(`Retirer les ${bt.n} opérations importées depuis « ${bt.name} » ?`))return;DB.tx=DB.tx.filter(t=>t.batch!==bt.id).concat(bt.merged||[]);DB.batches=DB.batches.filter(x=>x!==bt);save();renderSet();toast("Import annulé")});
   $("#setImp").onclick=startImport;
