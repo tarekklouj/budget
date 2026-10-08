@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.github.com https://gist.githubusercontent.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#0E6E57">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -266,12 +266,12 @@ async function deriveKey(pass,salt){const base=await crypto.subtle.importKey("ra
 async function sealWith(key,salt,obj){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=await crypto.subtle.encrypt({name:"AES-GCM",iv},key,enc.encode(JSON.stringify(obj)));return {app:"budget",v:1,kdf:"PBKDF2-SHA256-310000",salt:b64(salt),iv:b64(iv),ct:b64(new Uint8Array(ct))}}
 async function openVault(vault,pass){const salt=unb64(vault.salt);const key=await deriveKey(pass,salt);const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(vault.iv)},key,unb64(vault.ct));return {key,salt,data:JSON.parse(dec.decode(pt))}}
 function readVault(){try{return JSON.parse(localStorage.getItem(VKEY))}catch(e){return null}}
-async function persist(){if(!KEY||!DB)return;try{trackChanges();localStorage.setItem(VKEY,JSON.stringify(await sealWith(KEY,SALT,DB)))}catch(e){toast("Enregistrement impossible : stockage plein ou bloqué")}}
-function save(){HIST=null;clearTimeout(saveTimer);saveTimer=setTimeout(async()=>{await persist();if(DB&&DB.sync&&BS.key){clearTimeout(BS.timer);BS.timer=setTimeout(()=>bPush(false),2500)}},250)}
+async function persist(){if(!KEY||!DB)return;try{localStorage.setItem(VKEY,JSON.stringify(await sealWith(KEY,SALT,DB)))}catch(e){toast("Enregistrement impossible : stockage plein ou bloqué")}}
+function save(){HIST=null;clearTimeout(saveTimer);saveTimer=setTimeout(persist,250)}
 
 /* ============ lock screen ============ */
 function showLock(msg){
-  DB=null;KEY=null;SALT=null;BS.key=null;BS.snap=null;BS.lastHash="";closeSheet();
+  DB=null;KEY=null;SALT=null;closeSheet();
   $("#app").hidden=true;$("#lock").hidden=false;$("#lockErr").textContent=msg||"";
   const has=!!readVault();
   $("#setupBox").hidden=has;$("#unlockBox").hidden=!has;$("#lockFoot").hidden=!has;
@@ -283,13 +283,13 @@ $("#setupBtn").onclick=async()=>{
   if(a.length<8)return $("#lockErr").textContent="8 caractères minimum.";
   if(a!==b)return $("#lockErr").textContent="Les deux mots de passe ne correspondent pas.";
   $("#setupBtn").disabled=true;
-  SALT=crypto.getRandomValues(new Uint8Array(16));KEY=await deriveKey(a,SALT);DB=blank();takeSnap();await persist();
+  SALT=crypto.getRandomValues(new Uint8Array(16));KEY=await deriveKey(a,SALT);DB=blank();await persist();
   $("#pw1").value=$("#pw2").value="";$("#setupBtn").disabled=false;enterApp();
 };
 async function unlock(){
   const v=readVault();if(!v)return showLock();
   $("#unlockBtn").disabled=true;$("#lockErr").textContent="";
-  try{const r=await openVault(v,$("#pw").value);KEY=r.key;SALT=r.salt;DB=Object.assign(blank(),r.data);takeSnap();$("#pw").value="";enterApp();if(DB.sync)setTimeout(bPull,300)}
+  try{const r=await openVault(v,$("#pw").value);KEY=r.key;SALT=r.salt;DB=Object.assign(blank(),r.data);$("#pw").value="";enterApp()}
   catch(e){$("#lockErr").textContent="Mot de passe incorrect."}
   finally{$("#unlockBtn").disabled=false}
 }
@@ -895,9 +895,7 @@ function renderSet(){
     <h2>Imports</h2>
     <button class="btn primary block" id="setImp">Importer un relevé CSV</button>
     ${DB.batches.length?`<div class="list" style="margin-top:10px">${DB.batches.map(b=>`<div class="tx" style="cursor:default"><span class="t"><b>${esc(b.name)}</b><span>${new Date(b.at).toLocaleDateString("fr-BE")} · ${b.n} opérations</span></span><button class="link" data-ub="${esc(b.id)}" style="color:var(--err)">Annuler</button></div>`).join("")}</div>`:""}
-    <h2>Synchronisation</h2>
-    ${budgetSyncCard()}
-    <h2>Sauvegarde</h2>
+    <h2>Sauvegarde & synchronisation</h2>
     <div class="card"><p style="margin:0 0 12px">La sauvegarde est chiffrée avec ton mot de passe. Garde-la sur iCloud Drive ou une clé USB, ou ouvre-la sur un autre appareil pour synchroniser.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn primary" id="bkOut">Exporter</button><button class="btn" id="bkIn">Fusionner une sauvegarde</button></div></div>
     <h2>Sécurité</h2>
@@ -911,7 +909,7 @@ function renderSet(){
   DB.plan=DB.plan||{income:0,save:0};
   document.querySelectorAll("[data-plan]").forEach(i=>i.onchange=()=>{DB.plan[i.dataset.plan]=Math.abs(parseAmount(i.value))||0;save();refreshPlan()});
   document.querySelectorAll("[data-pm]").forEach(b=>b.onclick=()=>{DB.plan.mode=b.dataset.pm;save();refreshPlan()});
-  $("#rulesBtn").onclick=openRules;bindBudgetSync();
+  $("#rulesBtn").onclick=openRules;
   document.querySelectorAll("[data-ub]").forEach(b=>b.onclick=()=>{const bt=DB.batches.find(x=>x.id===b.dataset.ub);if(!bt||!confirm(`Retirer les ${bt.n} opérations importées depuis « ${bt.name} » ?`))return;DB.tx=DB.tx.filter(t=>t.batch!==bt.id).concat(bt.merged||[]);DB.batches=DB.batches.filter(x=>x!==bt);save();renderSet();toast("Import annulé")});
   $("#setImp").onclick=startImport;
   $("#lockMin").onchange=e=>{DB.settings.lockMin=+e.target.value;save()};
@@ -953,112 +951,6 @@ function mergeData(o){
   Object.assign(DB.mappings,o.mappings||{});
   return n;
 }
-
-/* ============ synchro automatique (Gist GitHub, chiffré) ============ */
-const BS={file:"budget-sync.json",key:null,busy:false,lastHash:"",status:"off",when:0,err:"",snap:null,timer:null};
-function stableB(o){if(Array.isArray(o))return "["+o.map(stableB).join(",")+"]";if(o&&typeof o==="object")return "{"+Object.keys(o).sort().map(k=>JSON.stringify(k)+":"+stableB(o[k])).join(",")+"}";return JSON.stringify(o)}
-function hashB(s){let h1=0x811c9dc5,h2=0x01000193;for(let i=0;i<s.length;i++){const c=s.charCodeAt(i);h1=Math.imul(h1^c,0x01000193);h2=Math.imul(h2^c,0x5bd1e995)}return (h1>>>0).toString(16)+(h2>>>0).toString(16)}
-const txSig=t=>{const {u,...r}=t;return stableB(r)};
-const setSig=()=>stableB({b:DB.budgets,p:DB.plan,r:DB.rules});
-function takeSnap(){if(!DB)return;BS.snap={tx:new Map(DB.tx.map(t=>[t.id,txSig(t)])),set:setSig()}}
-/* marque ce qui a changé localement : horodatage par opération, suppressions, réglages */
-function trackChanges(){
-  if(!DB)return;DB.del=DB.del||{};if(!BS.snap){takeSnap();return}
-  const now=Date.now(),seen=new Set();
-  DB.tx.forEach(t=>{seen.add(t.id);const old=BS.snap.tx.get(t.id),sig=txSig(t);if(old!==sig)t.u=now});
-  BS.snap.tx.forEach((_,id)=>{if(!seen.has(id))DB.del[id]=now});
-  if(setSig()!==BS.snap.set)DB.su=now;
-  takeSnap();
-}
-const syncData=()=>({tx:DB.tx,del:DB.del||{},budgets:DB.budgets,plan:DB.plan,rules:DB.rules,su:DB.su||0,batches:DB.batches,mappings:DB.mappings});
-const syncHash=()=>hashB(stableB({...syncData(),tx:[...DB.tx].sort((a,b)=>a.id<b.id?-1:1)}));
-async function bgh(path,opt={}){
-  const r=await fetch("https://api.github.com"+path,{...opt,headers:{"Authorization":"Bearer "+DB.sync.token,"Accept":"application/vnd.github+json","Content-Type":"application/json"}});
-  if(r.status===401)throw new Error("token");if(r.status===403||r.status===404)throw new Error("perm");if(!r.ok)throw new Error("http"+r.status);return r.json();
-}
-async function bReadGist(id){const g=await bgh("/gists/"+id);const f=g.files[BS.file];if(!f)return null;let txt=f.content;if(f.truncated&&f.raw_url)txt=await (await fetch(f.raw_url)).text();try{return JSON.parse(txt)}catch(e){return null}}
-async function bLoadKey(){if(!DB||!DB.sync||!DB.sync.k)return null;BS.key=await crypto.subtle.importKey("raw",unb64(DB.sync.k),"AES-GCM",false,["encrypt","decrypt"]);return BS.key}
-async function bSeal(obj){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},BS.key,enc.encode(JSON.stringify(obj))));return {iv:b64(iv),ct:b64(ct)}}
-async function bOpen(p){return JSON.parse(dec.decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:unb64(p.iv)},BS.key,unb64(p.ct))))}
-function bStatus(st,err){BS.status=st;BS.err=err||"";if(st==="ok")BS.when=Date.now();const el=$("#bsStatus");if(el)el.innerHTML=bStatusHTML()}
-function bStatusHTML(){if(!DB||!DB.sync)return "Désactivée";if(BS.status==="busy")return "⏳ Synchronisation…";if(BS.status==="err")return "⚠️ "+esc(BS.err);if(BS.when){const s=Math.round((Date.now()-BS.when)/1000);return `✅ Synchronisé il y a ${s<60?s+" s":Math.round(s/60)+" min"}`}return "✅ Activée"}
-const bErr=e=>e.message==="token"?"Token invalide ou expiré":e.message==="perm"?"Le token n'a pas la permission Gists":/Failed to fetch|NetworkError|Load failed/i.test(e.message)?"Pas de connexion (la synchro marche sur la version GitHub)":"Erreur de synchro, nouvel essai bientôt";
-/* fusion : dernière modification gagne, suppressions propagées, imports en double évités */
-function syncMerge(o){
-  DB.del=DB.del||{};Object.entries(o.del||{}).forEach(([id,ts])=>{if(!DB.del[id]||DB.del[id]<ts)DB.del[id]=ts});
-  DB.tx=DB.tx.filter(t=>!(DB.del[t.id]&&DB.del[t.id]>=(t.u||0)));
-  const byId=new Map(DB.tx.map(t=>[t.id,t])),cur={},seen={};DB.tx.forEach(t=>{cur[t.fp]=(cur[t.fp]||0)+1});
-  (o.tx||[]).forEach(r=>{
-    if(DB.del[r.id]&&DB.del[r.id]>=(r.u||0))return;
-    const l=byId.get(r.id);
-    if(l){if((r.u||0)>(l.u||0))Object.assign(l,r);return}
-    seen[r.fp]=(seen[r.fp]||0)+1;if(r.src==="import"&&seen[r.fp]<=(cur[r.fp]||0))return;
-    DB.tx.push(r);byId.set(r.id,r);
-  });
-  if((o.su||0)>(DB.su||0)){DB.budgets=o.budgets||{};DB.plan=o.plan||DB.plan;DB.rules=o.rules||[];DB.su=o.su}
-  (o.batches||[]).forEach(b=>{if(!DB.batches.some(x=>x.id===b.id))DB.batches.push(b)});
-  Object.assign(DB.mappings,o.mappings||{});
-}
-async function bPush(force){
-  if(!DB||!DB.sync||!BS.key||BS.busy)return;const h=syncHash();if(!force&&h===BS.lastHash)return;
-  BS.busy=true;bStatus("busy");
-  try{const p={app:"budget",v:1,at:Date.now(),h,salt:DB.sync.salt,...await bSeal(syncData())};
-    await bgh("/gists/"+DB.sync.id,{method:"PATCH",body:JSON.stringify({files:{[BS.file]:{content:JSON.stringify(p)}}})});BS.lastHash=h;bStatus("ok")}
-  catch(e){bStatus("err",bErr(e))}finally{BS.busy=false}
-}
-async function bPull(){
-  if(!DB||!DB.sync||BS.busy)return;if(!BS.key)await bLoadKey();if(!BS.key)return;
-  BS.busy=true;bStatus("busy");let needPush=false,changed=false;
-  try{const p=await bReadGist(DB.sync.id);
-    if(p&&p.ct&&p.h!==BS.lastHash){const before=syncHash();syncMerge(await bOpen(p));takeSnap();HIST=null;changed=syncHash()!==before;BS.lastHash=p.h;needPush=syncHash()!==p.h;if(changed){await persist();render()}}
-    else if(!p||!p.ct)needPush=true;
-    bStatus("ok")}
-  catch(e){bStatus("err",e.name==="OperationError"?"Mot de passe de synchro différent sur cet appareil":bErr(e))}
-  finally{BS.busy=false}
-  if(needPush)return bPush(true);
-}
-async function enableBudgetSync(token,pass){
-  DB.sync={token};
-  try{
-    const list=await bgh("/gists?per_page=100");const g=list.find(x=>x.files&&x.files[BS.file]);let salt,id,p=null;
-    if(g){id=g.id;p=await bReadGist(id);salt=p&&p.salt?unb64(p.salt):crypto.getRandomValues(new Uint8Array(16))}else salt=crypto.getRandomValues(new Uint8Array(16));
-    const base=await crypto.subtle.importKey("raw",enc.encode(pass),"PBKDF2",false,["deriveBits"]);
-    const raw=new Uint8Array(await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:310000,hash:"SHA-256"},base,256));
-    BS.key=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt","decrypt"]);
-    if(p&&p.ct){try{await bOpen(p)}catch(e){throw new Error("pass")}}
-    if(!g){const c=await bgh("/gists",{method:"POST",body:JSON.stringify({description:"Budget sync (encrypted)",public:false,files:{[BS.file]:{content:"{}"}}})});id=c.id}
-    DB.sync={token,id,salt:b64(salt),k:b64(raw)};BS.lastHash="";trackChanges();await persist();await bPull();
-  }catch(e){DB.sync=null;BS.key=null;throw e}
-}
-function openBudgetSyncSetup(){
-  sheet(`<h3>Synchronisation automatique</h3>
-    <p class="small" style="margin-top:-6px">Tes données sont chiffrées sur cet appareil, puis stockées dans un Gist privé de ton compte GitHub. GitHub ne voit qu'un bloc illisible. Utilise le <b>même token et le même mot de passe de synchro</b> sur tous tes appareils.</p>
-    <ol class="small" style="padding-left:20px;margin:0 0 12px"><li>GitHub → Settings → Developer settings → Fine-grained tokens → <b>Generate new token</b></li><li>Account permissions → <b>Gists : Read and write</b>, rien d'autre</li><li>Copie le token et colle-le ci-dessous</li></ol>
-    <label class="f">Token GitHub<input class="input" id="bsTok" type="password" autocomplete="off" placeholder="github_pat_…"></label>
-    <label class="f">Mot de passe de synchro (8 caractères min.)<input class="input" id="bsPw" type="password" autocomplete="new-password"></label>
-    <p class="err" id="bsErr"></p>
-    <button class="btn primary block" id="bsGo">Activer la synchro</button>`);
-  $("#bsGo").onclick=async()=>{const t=$("#bsTok").value.trim(),p=$("#bsPw").value;
-    if(!t)return $("#bsErr").textContent="Colle ton token.";if(p.length<8)return $("#bsErr").textContent="8 caractères minimum.";
-    $("#bsGo").disabled=true;$("#bsGo").textContent="Connexion…";
-    try{await enableBudgetSync(t,p);closeSheet();renderSet();toast("Synchro activée")}
-    catch(e){$("#bsErr").textContent=e.message==="pass"?"Ce mot de passe ne correspond pas à celui de ton autre appareil.":bErr(e);$("#bsGo").disabled=false;$("#bsGo").textContent="Activer la synchro"}};
-}
-function budgetSyncCard(){
-  const on=!!(DB&&DB.sync);
-  return on?`<div class="card"><div class="between"><b>Synchro automatique</b><span id="bsStatus" class="small">${bStatusHTML()}</span></div>
-      <p class="small" style="margin:8px 0 12px">Tes opérations, budgets et règles se synchronisent tout seuls entre tes appareils, chiffrés.</p>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn primary" id="bsNow">Synchroniser</button><button class="btn" id="bsOff">Désactiver</button></div></div>`
-    :`<div class="card"><p style="margin:0 0 12px"><b>Synchro automatique</b><br><span class="small">Entre iPhone, iPad et ordinateur, chiffrée, privée et gratuite.</span></p><button class="btn primary block" id="bsOn">Configurer</button></div>`;
-}
-function bindBudgetSync(){
-  const a=$("#bsOn");if(a)a.onclick=openBudgetSyncSetup;
-  const n=$("#bsNow");if(n)n.onclick=async()=>{await bPull();await bPush(true)};
-  const o=$("#bsOff");if(o)o.onclick=()=>{if(confirm("Désactiver la synchro sur cet appareil ? Tes données restent ici.")){DB.sync=null;BS.key=null;BS.lastHash="";save();renderSet()}};
-}
-document.addEventListener("visibilitychange",()=>{if(!document.hidden&&DB&&DB.sync)bPull()});
-setInterval(()=>{if(!document.hidden&&DB&&DB.sync)bPull()},45000);
-setInterval(()=>{const el=$("#bsStatus");if(el)el.innerHTML=bStatusHTML()},10000);
 
 /* ============ boot ============ */
 if(!window.crypto||!crypto.subtle){$("#lockIntro").textContent="Ce navigateur ne permet pas le chiffrement. Ouvre l'appli en HTTPS dans Safari ou Chrome.";$("#setupBox").hidden=$("#unlockBox").hidden=true}
