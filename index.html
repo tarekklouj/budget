@@ -103,6 +103,10 @@ label.f{display:grid;gap:5px;font-size:14px;font-weight:700;color:var(--muted);m
 .pos{color:var(--accent)}
 .bud{display:grid;gap:7px;padding:12px 0;border-bottom:1px solid var(--line)}
 .bud .between span:first-child{font-weight:700}
+button.bud{width:100%;background:none;border:none;border-bottom:1px solid var(--line);text-align:left;cursor:pointer;font:inherit;color:inherit}
+button.bud .go{color:var(--muted);font-size:13px}
+.catsum{display:flex;align-items:center;gap:12px;background:var(--panel);border-radius:16px;padding:12px 14px;margin-top:10px}
+.catsum .x{border:none;background:var(--soft);border-radius:10px;width:36px;height:36px;font-size:16px;flex:none}
 .datehead{font-size:13px;font-weight:700;color:var(--muted);margin:14px 4px 6px;text-transform:capitalize}
 .empty{text-align:center;padding:30px 16px;color:var(--muted)}
 
@@ -326,7 +330,7 @@ document.addEventListener("visibilitychange",()=>{if(document.hidden)hiddenAt=Da
 $("#lockBtn").onclick=async()=>{clearTimeout(saveTimer);await persist();showLock()};
 
 /* ============ app shell ============ */
-let VIEW="home",MONTH=ym(todayISO()),PERIOD="month",TXF={q:"",f:"all"};
+let VIEW="home",MONTH=ym(todayISO()),PERIOD="month",TXF={q:"",f:"all",c:""};
 const YEAR=()=>MONTH.slice(0,4);
 const periodTx=()=>PERIOD==="year"?DB.tx.filter(t=>t.date.slice(0,4)===YEAR()):monthTx(MONTH);
 const periodLabel=()=>PERIOD==="year"?YEAR():monthLabel(MONTH);
@@ -443,7 +447,7 @@ function renderHome(){
   }
   const unc=DB.tx.filter(t=>!t.cat).length;
   const buds=CATS.filter(c=>DB.budgets[c.id]>0).map(c=>{const s=Math.max(0,-tx.filter(t=>t.cat===c.id).reduce((a,t)=>a+t.amount,0)),b=+DB.budgets[c.id]*mult,over=s>b;
-    return `<div class="bud"><div class="between"><span>${esc(c.name)}</span><span${over?' style="color:var(--warn)"':""}><b>${money(s)}</b> <span class="muted">/ ${money(b)}</span></span></div><div class="bar ${over?"over":""}"><i style="width:${Math.min(100,s/b*100)}%;${over?"":"background:"+c.color}"></i></div>${over?`<span class="small" style="color:var(--warn);font-weight:700">Dépassé de ${money(s-b)}</span>`:""}</div>`}).join("");
+    return `<button class="bud" data-cat="${c.id}" aria-label="Voir les opérations ${esc(c.name)}"><div class="between"><span>${esc(c.name)} <span class="go">›</span></span><span${over?' style="color:var(--warn)"':""}><b>${money(s)}</b> <span class="muted">/ ${money(b)}</span></span></div><div class="bar ${over?"over":""}"><i style="width:${Math.min(100,s/b*100)}%;${over?"":"background:"+c.color}"></i></div>${over?`<span class="small" style="color:var(--warn);font-weight:700">Dépassé de ${money(s-b)}</span>`:""}</button>`}).join("");
   const uncSpent=-tx.filter(t=>!t.cat&&t.amount<0).reduce((a,t)=>a+t.amount,0),intOut=-tx.filter(t=>t.cat==="epargne"&&t.amount<0).reduce((a,t)=>a+t.amount,0);
   const extra=(uncSpent>0?`<div class="bud"><div class="between"><span>À classer <span class="small">(compté dans le total)</span></span><span><b>${money(uncSpent)}</b> <button class="link" data-jump="unc">Classer</button></span></div></div>`:"")
     +(intOut>0?`<div class="bud"><div class="between"><span>Virements internes <span class="small">(non comptés)</span></span><span><b>${money(intOut)}</b> <button class="link" data-jump="cat:epargne">Voir</button></span></div></div>`:"");
@@ -455,6 +459,7 @@ function renderHome(){
     <div class="between"><h2>Dernières opérations</h2>${tx.length?`<button class="link" id="seeAll">Tout voir</button>`:""}</div>
     ${recent.length?`<div class="list">${recent.map(txRow).join("")}</div>`:emptyMonthCard()}`;
   bindTxRows($("#v-home"));
+  document.querySelectorAll("#v-home [data-cat]").forEach(b=>b.onclick=()=>showCat(b.dataset.cat));
   const g=$("#goUnc");if(g)g.onclick=openBulk;
   document.querySelectorAll("#v-home [data-jump]").forEach(b=>b.onclick=()=>{const j=b.dataset.jump;if(j==="unc")return openBulk();TXF={q:"",f:j};go("tx")});
   const ep=$("#editPlan");if(ep)ep.onclick=()=>{go("set");setTimeout(()=>{const e=$("#planSec");if(e)e.scrollIntoView()},50)};
@@ -465,18 +470,29 @@ function renderHome(){
 }
 
 /* ============ TRANSACTIONS ============ */
+function showCat(id){TXF={q:"",f:"all",c:id};go("tx")}
 function renderTx(){
-  const all=TXF.f==="unc"?DB.tx.filter(t=>!t.cat):TXF.f.startsWith("cat:")?periodTx().filter(t=>t.cat===TXF.f.slice(4)):periodTx();
+  if(TXF.f&&TXF.f.startsWith("cat:")){TXF.c=TXF.f.slice(4);TXF.f="all"}
+  const base=TXF.f==="unc"?DB.tx.filter(t=>!t.cat):periodTx();
+  const inCat=t=>!TXF.c||(TXF.c==="_"?!t.cat:t.cat===TXF.c);
   const q=strip(TXF.q);
-  let list=all.filter(t=>(TXF.f==="out"?t.amount<0:TXF.f==="in"?t.amount>0:true)&&(!q||strip(t.label+" "+(t.note||"")+" "+catOf(t).name).includes(q)));
+  let list=base.filter(t=>inCat(t)&&(TXF.f==="out"?t.amount<0:TXF.f==="in"?t.amount>0:true)&&(!q||strip(t.label+" "+(t.note||"")+" "+catOf(t).name).includes(q)));
   list.sort((a,b)=>b.date.localeCompare(a.date));
   const chips=[["all",PERIOD==="year"?"Toute l'année":"Tout le mois"],["out","Dépenses"],["in","Revenus"],["unc",`À classer (${DB.tx.filter(t=>!t.cat).length})`]];
+  const ptx=periodTx(),cnt=id=>ptx.filter(t=>id==="_"?!t.cat:t.cat===id).length;
+  const catOpts=CATS.map(c=>({id:c.id,name:c.name,n:cnt(c.id)})).concat([{id:"_",name:"À classer",n:cnt("_")}]);
+  let sum="";
+  if(TXF.c){const c=TXF.c==="_"?NONE:CAT[TXF.c],ct=list,spent=-ct.filter(isExpense).reduce((a,t)=>a+t.amount,0),inc=ct.filter(t=>t.amount>0).reduce((a,t)=>a+t.amount,0);
+    const b=DB.budgets[TXF.c]?DB.budgets[TXF.c]*(PERIOD==="year"?12:1):0;
+    sum=`<div class="catsum"><span class="dot" style="background:${c.color};width:14px;height:14px;border-radius:7px"></span><div style="flex:1"><b>${esc(c.name)}</b><div class="small">${ct.length} opération${ct.length>1?"s":""} · ${spent>0?money(spent)+" dépensés":money(inc)+" reçus"}${b?` · budget ${money(b)}${spent>b?` <span style="color:var(--warn);font-weight:700">(dépassé de ${money(spent-b)})</span>`:` (reste ${money(b-spent)})`}`:""}</div></div><button class="x" id="catClear" aria-label="Retirer le filtre">✕</button></div>`}
   let html="",last="";
   list.forEach(t=>{if(t.date!==last){if(last)html+="</div>";last=t.date;html+=`<p class="datehead">${new Date(t.date).toLocaleDateString("fr-BE",{weekday:"long",day:"numeric",month:"long"})}</p><div class="list">`}html+=txRow(t)});
   if(last)html+="</div>";
   $("#v-tx").innerHTML=`<div class="between"><h1 style="margin:0">Opérations</h1><button class="btn primary" id="impBtn">Importer</button></div>
     <input class="input" id="q" type="search" placeholder="Rechercher…" value="${esc(TXF.q)}" aria-label="Rechercher" style="margin:14px 0 10px">
     <div class="chips">${chips.map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${TXF.f===k}">${esc(l)}</button>`).join("")}</div>
+    <select class="input" id="catSel" aria-label="Catégorie" style="margin-top:6px"><option value="">📂 Toutes les catégories</option>${catOpts.map(o=>`<option value="${o.id}" ${TXF.c===o.id?"selected":""}>${esc(o.name)}${o.n?` (${o.n})`:""}</option>`).join("")}</select>
+    ${sum}
     ${TXF.f==="unc"&&list.length?`<button class="btn primary block" id="bulkBtn" style="margin-top:12px">Classer en lot par commerçant</button>`:""}
     ${html||`<div class="empty">${TXF.f==="unc"?"Tout est classé. 👍":"Aucune opération."}</div>`}`;
   const bb=$("#bulkBtn");if(bb)bb.onclick=openBulk;
@@ -484,7 +500,10 @@ function renderTx(){
   $("#impBtn").onclick=startImport;
   const qi=$("#q");qi.oninput=()=>{TXF.q=qi.value;const p=qi.selectionStart;renderTx();const n=$("#q");n.focus();n.setSelectionRange(p,p)};
   document.querySelectorAll("#v-tx .chip").forEach(c=>c.onclick=()=>{TXF.f=c.dataset.f;renderTx()});
+  $("#catSel").onchange=e=>{TXF.c=e.target.value;renderTx()};
+  const cc=$("#catClear");if(cc)cc.onclick=()=>{TXF.c="";renderTx()};
 }
+
 
 /* ============ add / edit sheet ============ */
 function sheet(html){$("#sheetRoot").innerHTML=`<div class="overlay" id="ov"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;$("#ov").addEventListener("click",e=>{if(e.target.id==="ov")closeSheet()});return $("#sheetRoot .sheet")}
@@ -834,7 +853,7 @@ function renderStats(){
   const merch={};tx.forEach(t=>{const k=merchantKey(t.label)||t.label;merch[k]=(merch[k]||0)-t.amount});
   const top=Object.entries(merch).filter(([k,v])=>v>0).sort((a,b)=>b[1]-a[1]).slice(0,5);
   const withData=series.filter(x=>x.out>0),hi=withData.sort((a,b)=>b.out-a.out)[0];
-  const catRows=parts.map(p=>`<div class="tx" style="cursor:default"><span class="dot" style="background:${p.c.color}"></span><span class="t"><b>${esc(p.c.name)}</b>${Y?`<span>${money(p.v/nm)} / mois en moyenne</span>`:""}</span><span class="a">${money(p.v)}</span></div>`).join("");
+  const catRows=parts.map(p=>`<div class="tx" data-cat="${p.c.id||"_"}" style="cursor:pointer"><span class="dot" style="background:${p.c.color}"></span><span class="t"><b>${esc(p.c.name)}</b>${Y?`<span>${money(p.v/nm)} / mois en moyenne</span>`:""}</span><span class="a">${money(p.v)} ›</span></div>`).join("");
   $("#v-stats").innerHTML=`<h1>Statistiques ${Y?esc(YEAR()):""}</h1>
     ${Y&&(total||inc)?`<div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
       <div><div class="small">Dépensé</div><b style="font-size:20px">${money(total)}</b></div>
@@ -850,6 +869,7 @@ function renderStats(){
       <div class="bars" style="grid-template-columns:repeat(${series.length},minmax(0,1fr));gap:${Y?4:8}px">${series.map(s=>`<div class="c"><div class="pair"><i style="height:${s.out/mx*110}px;background:var(--warnFill)" title="Dépenses ${money(s.out)}"></i><i style="height:${s.inc/mx*110}px;background:var(--accent)" title="Revenus ${money(s.inc)}"></i></div><span class="lab">${Y?new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"narrow"}):new Date(s.m+"-01").toLocaleDateString("fr-BE",{month:"short"})}</span></div>`).join("")}</div></div>
     ${recurringHTML()}
     ${top.length?`<h2>Où part ton argent</h2><div class="list">${top.map(([k,v])=>`<div class="tx" style="cursor:default"><span class="t"><b style="text-transform:capitalize">${esc(k)}</b></span><span class="a">${money(v)}</span></div>`).join("")}</div>`:""}`;
+  document.querySelectorAll("#v-stats [data-cat]").forEach(b=>b.onclick=()=>showCat(b.dataset.cat));
 }
 
 /* ============ SETTINGS ============ */
