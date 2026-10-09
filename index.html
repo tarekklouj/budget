@@ -914,7 +914,10 @@ function renderSet(){
     <button class="btn block" id="rulesBtn">Voir les règles${DB.rules.length?` (${DB.rules.length})`:""}</button>
     <h2>Imports</h2>
     <button class="btn primary block" id="setImp">Importer un relevé CSV</button>
-    ${DB.batches.length?`<div class="list" style="margin-top:10px">${DB.batches.map(b=>`<div class="tx" style="cursor:default"><span class="t"><b>${esc(b.name)}</b><span>${new Date(b.at).toLocaleDateString("fr-BE")} · ${b.n} opérations</span></span><button class="link" data-ub="${esc(b.id)}" style="color:var(--err)">Annuler</button></div>`).join("")}</div>`:""}
+    ${(()=>{const act=DB.batches.filter(b=>!b.archived),arc=DB.batches.filter(b=>b.archived);
+      const row=(b,a)=>`<div class="tx" style="cursor:default"><span class="t"><b>${esc(b.name)}</b><span>${new Date(b.at).toLocaleDateString("fr-BE")} · ${b.n} opérations${a?" · archivé":""}</span></span>${a?`<button class="link" data-unarc="${esc(b.id)}">Désarchiver</button>`:`<button class="link" data-arc="${esc(b.id)}" style="margin-right:14px">Archiver</button><button class="link" data-ub="${esc(b.id)}" style="color:var(--err)">Annuler</button>`}</div>`;
+      return (act.length?`<div class="list" style="margin-top:10px">${act.map(b=>row(b,false)).join("")}</div>`:(arc.length?`<p class="small" style="margin:10px 0 0">Aucun import récent. Tous tes imports sont archivés.</p>`:""))
+        +(arc.length?`<details style="margin-top:10px"><summary class="small" style="font-weight:700;cursor:pointer">🗄️ Imports archivés (${arc.length})</summary><div class="list" style="margin-top:8px">${arc.map(b=>row(b,true)).join("")}</div><p class="small">Les opérations des imports archivés restent dans ton budget. L'archive range seulement la liste.</p></details>`:"")})()}
     <h2>Sauvegarde & synchronisation</h2>
     <div class="card"><p style="margin:0 0 12px">La sauvegarde est chiffrée avec ton mot de passe. Garde-la sur iCloud Drive ou une clé USB, ou ouvre-la sur un autre appareil pour synchroniser.</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><button class="btn primary" id="bkOut">Exporter</button><button class="btn" id="bkIn">Fusionner une sauvegarde</button></div></div>
@@ -931,6 +934,8 @@ function renderSet(){
   document.querySelectorAll("[data-pm]").forEach(b=>b.onclick=()=>{DB.plan.mode=b.dataset.pm;save();refreshPlan()});
   $("#rulesBtn").onclick=openRules;
   document.querySelectorAll("[data-ub]").forEach(b=>b.onclick=()=>{const bt=DB.batches.find(x=>x.id===b.dataset.ub);if(!bt||!confirm(`Retirer les ${bt.n} opérations importées depuis « ${bt.name} » ?`))return;DB.tx=DB.tx.filter(t=>t.batch!==bt.id).concat(bt.merged||[]);DB.batches=DB.batches.filter(x=>x!==bt);save();renderSet();toast("Import annulé")});
+  document.querySelectorAll("[data-arc]").forEach(b=>b.onclick=()=>{const bt=DB.batches.find(x=>x.id===b.dataset.arc);if(!bt)return;bt.archived=true;save();renderSet();toast("Import archivé · les opérations sont conservées")});
+  document.querySelectorAll("[data-unarc]").forEach(b=>b.onclick=()=>{const bt=DB.batches.find(x=>x.id===b.dataset.unarc);if(!bt)return;delete bt.archived;save();renderSet();toast("Import désarchivé")});
   $("#setImp").onclick=startImport;
   $("#lockMin").onchange=e=>{DB.settings.lockMin=+e.target.value;save()};
   $("#bkOut").onclick=async()=>{await persist();download(`budget-sauvegarde-${todayISO()}.json`,localStorage.getItem(VKEY),"application/json");toast("Sauvegarde chiffrée exportée")};
