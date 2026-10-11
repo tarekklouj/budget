@@ -526,6 +526,35 @@ function openDups(){
   $("#dupClose").onclick=()=>{closeSheet();render()};
   const dc=$("#dupClean");if(dc)dc.onclick=()=>{const n=cleanCrossDups();save();toast(`${n} doublon${n>1?"s":""} supprimé${n>1?"s":""}`);openDups()};
 }
+/* évolution d'une catégorie sur 12 mois */
+function catTrend(id){
+  const first=DB.tx.reduce((m,t)=>!m||t.date<m?t.date:m,"");if(!first)return "";
+  const endM=PERIOD==="year"?(YEAR()===todayISO().slice(0,4)?ym(todayISO()):YEAR()+"-12"):MONTH;
+  const months=[...Array(12)].map((_,i)=>shiftMonth(endM,i-11)).filter(m=>m>=ym(first));
+  if(months.length<2)return "";
+  const c=id==="_"?NONE:CAT[id],income=id!=="_"&&topId(id)==="revenus";
+  const val=m=>{const l=monthTx(m).filter(t=>id==="_"?!t.cat:inTree(t,id));return income?l.filter(t=>t.amount>0).reduce((a,t)=>a+t.amount,0):Math.max(0,-l.filter(isExpense).reduce((a,t)=>a+t.amount,0))};
+  const vals=months.map(val),cur=ym(todayISO());
+  const past=months.map((m,i)=>({m,v:vals[i]})).filter(x=>x.m<cur);
+  const avg=past.length?past.reduce((a,x)=>a+x.v,0)/past.length:0;
+  const bud=DB.budgets[id]&&!income?+DB.budgets[id]:0,mx=Math.max(1,bud,...vals);
+  const sel=PERIOD==="year"?null:MONTH,selV=sel?val(sel):null;
+  const diff=sel&&avg?Math.round((selV-avg)/avg*100):null;
+  const hi=months.map((m,i)=>({m,v:vals[i]})).sort((a,b)=>b.v-a.v)[0];
+  const mn=m=>new Date(m+"-01").toLocaleDateString("fr-BE",{month:"short"});
+  return `<div class="card" style="margin-top:10px">
+    <div class="between"><b>${income?"Revenus":"Dépenses"} sur ${months.length} mois</b><span class="small">Moyenne ${money(avg)}/mois</span></div>
+    <div style="position:relative;height:130px;margin-top:12px;display:grid;grid-template-columns:repeat(${months.length},minmax(0,1fr));gap:4px;align-items:end">
+      ${bud?`<div style="position:absolute;left:0;right:0;bottom:${18+bud/mx*100}px;border-top:2px dashed var(--warnFill);opacity:.8" title="Budget ${money(bud)}"></div>`:""}
+      ${months.map((m,i)=>`<div style="display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;justify-content:flex-end"><i style="display:block;width:100%;max-width:22px;height:${Math.max(2,vals[i]/mx*100)}px;border-radius:5px 5px 2px 2px;background:${m===sel?c.color:"var(--line)"};${m===sel?"":"opacity:.9"}" title="${mn(m)} : ${money(vals[i])}"></i><span style="font-size:11px;color:var(--muted)">${mn(m).slice(0,3)}</span></div>`).join("")}
+    </div>
+    ${bud?`<p class="small" style="margin:8px 0 0"><span style="color:var(--warnFill)">- - -</span> budget ${money(bud)}/mois</p>`:""}
+    <div style="display:grid;gap:6px;margin-top:10px">
+      ${diff!==null?`<div class="between small"><span>${esc(monthLabel(sel))} vs ta moyenne</span><b style="color:${(diff>0)!==income?"var(--warn)":"var(--accent)"}">${diff>0?"+":""}${diff} %</b></div>`:""}
+      <div class="between small"><span>Mois le plus élevé</span><b style="text-transform:capitalize">${hi?esc(new Date(hi.m+"-01").toLocaleDateString("fr-BE",{month:"long",year:"numeric"}))+" · "+money(hi.v):"—"}</b></div>
+      <div class="between small"><span>Total sur la période</span><b>${money(vals.reduce((a,b)=>a+b,0))}</b></div>
+    </div></div>`;
+}
 function showCat(id){TXF={q:"",f:"all",c:id};go("tx")}
 function renderTx(){
   if(TXF.f&&TXF.f.startsWith("cat:")){TXF.c=TXF.f.slice(4);TXF.f="all"}
@@ -548,7 +577,7 @@ function renderTx(){
     <input class="input" id="q" type="search" placeholder="Rechercher…" value="${esc(TXF.q)}" aria-label="Rechercher" style="margin:14px 0 10px">
     <div class="chips">${chips.map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${TXF.f===k}">${esc(l)}</button>`).join("")}</div>
     <select class="input" id="catSel" aria-label="Catégorie" style="margin-top:6px"><option value="">📂 Toutes les catégories</option>${catOpts.map(o=>`<option value="${o.id}" ${TXF.c===o.id?"selected":""}>${esc(o.name)}${o.n?` (${o.n})`:""}</option>`).join("")}</select>
-    ${sum}
+    ${sum}${TXF.c?catTrend(TXF.c):""}
     ${(()=>{const n=findDups().length;return n?`<button class="banner" id="dupBtn" style="margin-top:12px"><span style="font-size:20px">⚠️</span><span style="flex:1"><b>${n} doublon${n>1?"s":""} possible${n>1?"s":""}</b><br><span class="small">Même jour, même montant, même libellé. Touche pour vérifier.</span></span></button>`:""})()}
     ${TXF.f==="unc"&&list.length?`<button class="btn primary block" id="bulkBtn" style="margin-top:12px">Classer en lot par commerçant</button>`:""}
     ${html||`<div class="empty">${TXF.f==="unc"?"Tout est classé. 👍":"Aucune opération."}</div>`}`;
