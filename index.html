@@ -490,21 +490,43 @@ function renderHome(){
 /* ============ TRANSACTIONS ============ */
 /* doublons possibles : même jour, même montant, même libellé */
 function findDups(){
-  const g={};DB.tx.forEach(t=>{const k=t.date+"|"+t.amount.toFixed(2)+"|"+strip(niceLabel(t.label)).replace(/[^a-z0-9]/g,"");(g[k]=g[k]||[]).push(t)});
-  return Object.entries(g).filter(([k,l])=>l.length>1&&!l.every(t=>t.notDup===k)).map(([k,l])=>({k,l}));
+  const g={};DB.tx.forEach(t=>{const k=t.date+"|"+t.amount.toFixed(2);(g[k]=g[k]||[]).push(t)});
+  const lab=t=>strip(niceLabel(t.label)).replace(/[^a-z0-9]/g,"");
+  return Object.entries(g).filter(([k,l])=>{
+    if(l.length<2||l.every(t=>t.notDup===k))return false;
+    const files=new Set(l.map(t=>t.batch||t.id));
+    return files.size>1||new Set(l.map(lab)).size<l.length;
+  }).map(([k,l])=>({k,l,cross:new Set(l.map(t=>t.batch||t.id)).size>1}));
+}
+/* supprime les doublons venant de fichiers différents : garde l'opération du premier import */
+function cleanCrossDups(){
+  let n=0;const at=t=>{const b=DB.batches.find(x=>x.id===t.batch);return b?b.at:"9"};
+  findDups().filter(g=>g.cross).forEach(g=>{
+    const byFile={};g.l.forEach(t=>{const f=t.batch||t.id;(byFile[f]=byFile[f]||[]).push(t)});
+    const files=Object.values(byFile).sort((a,b)=>at(a[0]).localeCompare(at(b[0])));
+    const keepN=Math.max(...files.map(f=>f.length));let kept=0;const keep=new Set();
+    files.forEach(f=>f.forEach(t=>{if(kept<keepN){keep.add(t.id);kept++}}));
+    const del=new Set(g.l.filter(t=>!keep.has(t.id)).map(t=>t.id));n+=del.size;
+    const kc=g.l.find(t=>keep.has(t.id)&&t.cat);g.l.forEach(t=>{if(keep.has(t.id)&&!t.cat&&kc)t.cat=kc.cat});
+    DB.tx=DB.tx.filter(t=>!del.has(t.id));
+  });
+  return n;
 }
 function openDups(){
   const groups=findDups();
   if(!groups.length){closeSheet();render();return toast("Aucun doublon 👍")}
   const src=t=>{const b=DB.batches.find(x=>x.id===t.batch);return t.src==="manual"?"Saisie manuelle":b?`Fichier « ${b.name} » importé le ${new Date(b.at).toLocaleDateString("fr-BE")}`:"Import"};
-  sheet(`<h3>Doublons possibles</h3><p class="small" style="margin-top:-6px">Même jour, même montant, même libellé. Vérifie sur ton relevé : si c'est vraiment deux paiements, garde les deux.</p>
-    ${groups.map((gr,gi)=>`<div class="card" style="background:var(--soft);margin-bottom:10px"><b>${esc(niceLabel(gr.l[0].label))}</b><div class="small">${new Date(gr.l[0].date).toLocaleDateString("fr-BE",{day:"numeric",month:"long",year:"numeric"})} · ${signed(gr.l[0].amount)} · ${gr.l.length} fois</div>
+  const nCross=groups.filter(g=>g.cross).length;
+  sheet(`<h3>Doublons</h3><p class="small" style="margin-top:-6px">Même jour et même montant. Ceux qui viennent de <b>deux fichiers différents</b> sont des doublons d'import. Ceux du <b>même fichier</b> peuvent être deux vrais paiements : vérifie sur ton relevé.</p>
+    ${nCross?`<button class="btn primary block" id="dupClean" style="margin-bottom:12px">Supprimer les ${nCross} doublon${nCross>1?"s":""} d'import (garder 1 de chaque)</button>`:""}
+    ${groups.map((gr,gi)=>`<div class="card" style="background:var(--soft);margin-bottom:10px"><b>${esc(niceLabel(gr.l[0].label))}</b><div class="small">${new Date(gr.l[0].date).toLocaleDateString("fr-BE",{day:"numeric",month:"long",year:"numeric"})} · ${signed(gr.l[0].amount)} · ${gr.l.length} fois · <b style="color:${gr.cross?"var(--warn)":"var(--muted)"}">${gr.cross?"fichiers différents":"même fichier"}</b></div>
       ${gr.l.map(t=>`<div class="between" style="border-top:1px solid var(--line);padding:8px 0;margin-top:8px"><span class="small">${esc(src(t))}${t.acct?" · "+esc(t.acct):""}</span><button class="link" data-deldup="${esc(t.id)}" style="color:var(--err)">Supprimer</button></div>`).join("")}
       <button class="btn block" data-notdup="${gi}" style="margin-top:8px">Ce ne sont pas des doublons</button></div>`).join("")}
     <button class="btn block" id="dupClose">Fermer</button>`);
   document.querySelectorAll("[data-deldup]").forEach(b=>b.onclick=()=>{DB.tx=DB.tx.filter(t=>t.id!==b.dataset.deldup);save();toast("Opération supprimée");openDups()});
   document.querySelectorAll("[data-notdup]").forEach(b=>b.onclick=()=>{const gr=groups[+b.dataset.notdup];gr.l.forEach(t=>t.notDup=gr.k);save();openDups()});
   $("#dupClose").onclick=()=>{closeSheet();render()};
+  const dc=$("#dupClean");if(dc)dc.onclick=()=>{const n=cleanCrossDups();save();toast(`${n} doublon${n>1?"s":""} supprimé${n>1?"s":""}`);openDups()};
 }
 function showCat(id){TXF={q:"",f:"all",c:id};go("tx")}
 function renderTx(){
@@ -794,14 +816,15 @@ function fpOf(r){return r.ref?"r:"+strip(r.ref).replace(/\s/g,"")+"|"+r.date+"|"
 function analyse(){
   const rows=buildRows(0);
   if(!rows.length)return toast("Aucune ligne valide : vérifie les colonnes Date et Montant");
-  const have={};DB.tx.forEach(t=>{have[t.fp]=(have[t.fp]||0)+1});
+  /* règle : même date + même montant qu'une opération déjà importée = doublon (comptage, pour garder
+     plusieurs vrais paiements identiques le même jour s'ils sont plusieurs fois dans le relevé) */
+  const dk=(date,amount)=>date+"|"+(+amount).toFixed(2);
+  const have={};DB.tx.forEach(t=>{if(t.src==="import"){const k=dk(t.date,t.amount);have[k]=(have[k]||0)+1}});
   const seen={},fresh=[],dups=[];
-  rows.forEach(r=>{r.fp=fpOf(r);seen[r.fp]=(seen[r.fp]||0)+1;if(seen[r.fp]<=(have[r.fp]||0))dups.push(r);else fresh.push(r)});
+  rows.forEach(r=>{r.fp=fpOf(r);const k=dk(r.date,r.amount);seen[k]=(seen[k]||0)+1;if(seen[k]<=(have[k]||0))dups.push(r);else fresh.push(r)});
   const used=new Set();
   fresh.forEach(r=>{
-    r.include=true;
-    const near=DB.tx.find(t=>t.src==="import"&&t.date===r.date&&Math.abs(t.amount-r.amount)<.005&&t.fp!==r.fp);
-    if(near){r.check=near;r.include=false}
+    r.include=true;const near=null;
     const man=DB.tx.find(t=>t.src==="manual"&&!used.has(t.id)&&Math.abs(t.amount-r.amount)<.005&&Math.abs(Date.parse(t.date)-Date.parse(r.date))<=3*864e5);
     if(man&&!near){r.merge=man;r.doMerge=true;used.add(man.id)}
   });
