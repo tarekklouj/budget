@@ -488,6 +488,24 @@ function renderHome(){
 }
 
 /* ============ TRANSACTIONS ============ */
+/* doublons possibles : même jour, même montant, même libellé */
+function findDups(){
+  const g={};DB.tx.forEach(t=>{const k=t.date+"|"+t.amount.toFixed(2)+"|"+strip(niceLabel(t.label)).replace(/[^a-z0-9]/g,"");(g[k]=g[k]||[]).push(t)});
+  return Object.entries(g).filter(([k,l])=>l.length>1&&!l.every(t=>t.notDup===k)).map(([k,l])=>({k,l}));
+}
+function openDups(){
+  const groups=findDups();
+  if(!groups.length){closeSheet();render();return toast("Aucun doublon 👍")}
+  const src=t=>{const b=DB.batches.find(x=>x.id===t.batch);return t.src==="manual"?"Saisie manuelle":b?`Fichier « ${b.name} » importé le ${new Date(b.at).toLocaleDateString("fr-BE")}`:"Import"};
+  sheet(`<h3>Doublons possibles</h3><p class="small" style="margin-top:-6px">Même jour, même montant, même libellé. Vérifie sur ton relevé : si c'est vraiment deux paiements, garde les deux.</p>
+    ${groups.map((gr,gi)=>`<div class="card" style="background:var(--soft);margin-bottom:10px"><b>${esc(niceLabel(gr.l[0].label))}</b><div class="small">${new Date(gr.l[0].date).toLocaleDateString("fr-BE",{day:"numeric",month:"long",year:"numeric"})} · ${signed(gr.l[0].amount)} · ${gr.l.length} fois</div>
+      ${gr.l.map(t=>`<div class="between" style="border-top:1px solid var(--line);padding:8px 0;margin-top:8px"><span class="small">${esc(src(t))}${t.acct?" · "+esc(t.acct):""}</span><button class="link" data-deldup="${esc(t.id)}" style="color:var(--err)">Supprimer</button></div>`).join("")}
+      <button class="btn block" data-notdup="${gi}" style="margin-top:8px">Ce ne sont pas des doublons</button></div>`).join("")}
+    <button class="btn block" id="dupClose">Fermer</button>`);
+  document.querySelectorAll("[data-deldup]").forEach(b=>b.onclick=()=>{DB.tx=DB.tx.filter(t=>t.id!==b.dataset.deldup);save();toast("Opération supprimée");openDups()});
+  document.querySelectorAll("[data-notdup]").forEach(b=>b.onclick=()=>{const gr=groups[+b.dataset.notdup];gr.l.forEach(t=>t.notDup=gr.k);save();openDups()});
+  $("#dupClose").onclick=()=>{closeSheet();render()};
+}
 function showCat(id){TXF={q:"",f:"all",c:id};go("tx")}
 function renderTx(){
   if(TXF.f&&TXF.f.startsWith("cat:")){TXF.c=TXF.f.slice(4);TXF.f="all"}
@@ -511,9 +529,11 @@ function renderTx(){
     <div class="chips">${chips.map(([k,l])=>`<button class="chip" data-f="${k}" aria-pressed="${TXF.f===k}">${esc(l)}</button>`).join("")}</div>
     <select class="input" id="catSel" aria-label="Catégorie" style="margin-top:6px"><option value="">📂 Toutes les catégories</option>${catOpts.map(o=>`<option value="${o.id}" ${TXF.c===o.id?"selected":""}>${esc(o.name)}${o.n?` (${o.n})`:""}</option>`).join("")}</select>
     ${sum}
+    ${(()=>{const n=findDups().length;return n?`<button class="banner" id="dupBtn" style="margin-top:12px"><span style="font-size:20px">⚠️</span><span style="flex:1"><b>${n} doublon${n>1?"s":""} possible${n>1?"s":""}</b><br><span class="small">Même jour, même montant, même libellé. Touche pour vérifier.</span></span></button>`:""})()}
     ${TXF.f==="unc"&&list.length?`<button class="btn primary block" id="bulkBtn" style="margin-top:12px">Classer en lot par commerçant</button>`:""}
     ${html||`<div class="empty">${TXF.f==="unc"?"Tout est classé. 👍":"Aucune opération."}</div>`}`;
   const bb=$("#bulkBtn");if(bb)bb.onclick=openBulk;
+  const db=$("#dupBtn");if(db)db.onclick=openDups;
   bindTxRows($("#v-tx"));
   $("#impBtn").onclick=startImport;
   const qi=$("#q");qi.oninput=()=>{TXF.q=qi.value;const p=qi.selectionStart;renderTx();const n=$("#q");n.focus();n.setSelectionRange(p,p)};
